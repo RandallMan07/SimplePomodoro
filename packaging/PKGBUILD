@@ -7,7 +7,7 @@ arch=('any')
 license=('MIT')
 depends=('python' 'python-gobject' 'python-cairo' 'gtk4>=4.12' 'libadwaita>=1.5' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'bash')
 makedepends=('desktop-file-utils')
-optdepends=('hyprland: floating and centered opening placement')
+optdepends=('hyprland: floating and centered opening placement' 'gtk4-layer-shell: always-visible top-center timer widget')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('@SOURCE_SHA256@')
 

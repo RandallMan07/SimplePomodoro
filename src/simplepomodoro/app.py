@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import sys
+from . import layer_support  # Must load before importing GTK/Wayland.
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -13,6 +14,7 @@ import cairo
 from .audio import Chimes
 from .core import Config, Timer, propose
 from .desktop import open_floating
+from .widget import SummaryWidget, widget_available
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,6 +30,7 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, application):
         super().__init__(application=application, title="SimplePomodoro")
         self.set_icon_name("io.github.simplepomodoro.App")
+        self.summary_widget = None
         self.settings_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "simplepomodoro/settings.json"
         self.settings = self.load_settings()
         self.timer = Timer()
@@ -39,6 +42,23 @@ class Window(Adw.ApplicationWindow):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Box())
+        header.set_decoration_layout(":close")
+        self.compact_button = Gtk.Button(icon_name="pan-up-symbolic")
+        self.compact_button.set_tooltip_text("Show the top-center timer widget")
+        self.compact_button.connect("clicked", self.show_widget)
+        self.minimize_button = Gtk.Button(icon_name="window-minimize-symbolic")
+        self.minimize_button.connect("clicked", self.minimize_timer)
+        supported = widget_available()
+        self.compact_button.set_sensitive(supported)
+        if not supported:
+            self.compact_button.set_tooltip_text("Widget requires gtk4-layer-shell and a Wayland compositor supporting layer shell")
+        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            self.minimize_button.set_sensitive(supported)
+            self.minimize_button.set_tooltip_text("Hide to the timer arrow (Hyprland has no native minimize); hover and select Open full timer to restore")
+        else:
+            self.minimize_button.set_tooltip_text("Minimize timer (desktop support varies)")
+        header.pack_end(self.compact_button)
+        header.pack_end(self.minimize_button)
         outer.append(header)
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, propagate_natural_height=True)
         outer.append(scroll)
@@ -154,6 +174,30 @@ class Window(Adw.ApplicationWindow):
         self.connect("map", self.on_first_map)
         self.opening_applied = False
         self.timeout_id = GLib.timeout_add(100, self.tick)
+
+    def show_widget(self, *_):
+        if not widget_available():
+            self.status.set_text("The top-center widget needs gtk4-layer-shell and a compatible Wayland desktop.")
+            return False
+        if self.summary_widget is None:
+            self.summary_widget = SummaryWidget(self)
+        self.summary_widget.present()
+        self.set_visible(False)
+        return True
+
+    def restore_main(self):
+        widget = self.summary_widget
+        self.summary_widget = None
+        if widget is not None:
+            widget.dispose_widget()
+        self.unminimize()
+        self.present()
+
+    def minimize_timer(self, *_):
+        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            self.show_widget()
+        else:
+            self.minimize()
 
     def on_first_map(self, *_):
         if not self.opening_applied:
@@ -308,6 +352,8 @@ class Window(Adw.ApplicationWindow):
                    + timer.duration - timer.remaining)
         self.progress.set_fraction(1 if timer.finished else elapsed / (config.total_minutes * 60))
         self.ring.queue_draw()
+        if self.summary_widget is not None:
+            self.summary_widget.update()
 
     def draw_ring(self, _area, cr, width, height):
         x, y = width / 2, height / 2
@@ -350,6 +396,9 @@ class Window(Adw.ApplicationWindow):
             self.close()
 
     def cleanup(self):
+        if self.summary_widget is not None:
+            self.summary_widget.dispose_widget()
+            self.summary_widget = None
         self.timer.running = False
         self.update_inhibit()
         self.audio.stop()
@@ -362,7 +411,7 @@ class Application(Adw.Application):
         super().__init__(application_id="io.github.simplepomodoro.App")
 
     def do_activate(self):
-        window = self.get_active_window()
+        window = next((item for item in self.get_windows() if isinstance(item, Window)), None)
         if window is None:
             Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(str(ROOT / "assets"))
@@ -370,7 +419,7 @@ class Application(Adw.Application):
             provider.load_from_path(str(ROOT / "assets/style.css"))
             Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             window = Window(self)
-        window.present()
+        window.restore_main()
 
 
 def main():

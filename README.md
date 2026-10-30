@@ -10,6 +10,7 @@ A small native Linux focus timer built with Python, GTK4, and libadwaita. Dark c
 - A schedule planner that suggests sessions for the time you have available.
 - Advance warnings, distinct chimes, volume control, and desktop notifications.
 - Saved preferences, an application launcher, and optional Hyprland placement.
+- A top-center arrow widget that expands into the current timer on hover.
 - Local operation with no account or network connection.
 
 Arch Linux is the documented installation target. Other Linux distributions need
@@ -56,6 +57,10 @@ Run from a terminal inside your graphical desktop session. The launcher uses Arc
 - **Heads-up** plays one advance chime per phase, seven seconds before the transition by default. Choose 0–60 seconds; 0 disables the advance alert. Phase changes use a distinct chime, and completion uses a third.
 - Adjust volume, mute tones, or use **Preview**. A visible warning still appears with tones muted. Desktop notifications accompany transitions if your notification service supports them.
 - Keep the window open or minimize it while timing. Closing an active timer asks to end the session. Settings persist; a running session does not.
+
+Use the header arrow button to switch to the **summary widget**. The arrow stays at the top center of the current monitor, above windows and fullscreen applications. Hover, focus, or click it to expand the bar with phase, remaining time, round, pause/resume, and **Open full timer**. Moving away collapses the bar; click pins it open. Escape or launching SimplePomodoro again restores the full window. The timer and alerts keep running while the full window is hidden.
+
+The widget requires the optional Arch package `gtk4-layer-shell` (`sudo pacman -S --needed gtk4-layer-shell`) and a Wayland compositor with layer-shell support, including Hyprland. It avoids taking screen space from other windows and respects existing panels. The widget button is disabled on unsupported desktops. The header minimize button requests native minimize on other desktops; on Hyprland, which has no native minimize, it hides to the recoverable timer arrow instead. No compositor configuration changes are needed.
 
 Preferences live in `$XDG_CONFIG_HOME/simplepomodoro/settings.json` (normally `~/.config/simplepomodoro/`). Generated chimes live in `$XDG_CACHE_HOME/simplepomodoro/`. No network connection is used. On Hyprland/Omarchy, the window opens floating, centered, and raised once, sized to its contents with timer and settings side by side. You can then move, resize, or tile it with Win+T. Small screens retain scrolling. This uses `hyprctl` without changing your desktop configuration.
 
