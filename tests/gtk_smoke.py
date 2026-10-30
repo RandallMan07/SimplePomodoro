@@ -83,6 +83,15 @@ def main():
                 save.assert_called_once()
         running.toggle_timer()
         paused_seconds = running.timer.remaining
+        with patch.object(running.session_store, "save", return_value=False):
+            running.session_store.error = "Session could not be saved: paused test failure"
+            running.close()
+            assert running.get_visible()
+            assert running in app.get_windows()
+            assert not running.timer.running
+            assert running.timer.remaining == paused_seconds
+            assert "paused test failure" in running.persistence_status.get_text()
+        # Retrying the close must save the paused state before any teardown.
         running.close()
         paused = Window(app)
         paused.present()
@@ -97,6 +106,12 @@ def main():
         assert ended.timer.index == 0
         assert ended.timer.remaining == 120
         assert ended.session_card.get_sensitive()
+        with patch.object(ended.session_store, "save", return_value=False):
+            ended.session_store.error = "Session could not be saved: idle test failure"
+            ended.close()
+            assert ended.get_visible()
+            assert ended in app.get_windows()
+            assert "idle test failure" in ended.persistence_status.get_text()
         ended.close()
         print("PASS: GTK construction, planner, start/pause/reset, warning, settings, running/paused session restoration, end session")
     return 0

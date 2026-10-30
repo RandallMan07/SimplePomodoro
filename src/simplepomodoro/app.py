@@ -386,29 +386,32 @@ class Window(Adw.ApplicationWindow):
             dialog.connect("response", self.close_response)
             dialog.present(self)
             return True
-        self.cleanup()
+        if not self.cleanup():
+            self.close_approved = False
+            return True
         return False
 
     def close_response(self, _dialog, response):
         if response in ("save", "end"):
             if response == "end":
                 self.reset_timer()
-            if not self.save_session():
-                # Keep the window available so an I/O failure is visible and the
-                # user can retry rather than silently losing a running session.
-                return
             self.close_approved = True
             self.close()
 
     def cleanup(self):
         # Persist before releasing inhibition and marking the in-memory timer
         # stopped, so a running session continues across a normal close.
-        self.save_session()
+        if not self.save_session():
+            # Do not tear down the timer when its latest running/paused/reset
+            # state could not replace the previous snapshot. Keep it available
+            # for a retry, with the persistence error visible in the window.
+            return False
         self.timer.running = False
         self.update_inhibit()
         self.audio.stop()
         GLib.source_remove(self.timeout_id)
         self.save_settings()
+        return True
 
 
 class Application(Adw.Application):
