@@ -5,6 +5,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk
+from .gallery_dialog import GalleryDialog
 
 class SoundSettings(Adw.Dialog):
     def __init__(self, owner):
@@ -14,6 +15,7 @@ class SoundSettings(Adw.Dialog):
         self.test_step = 0
         self.dropdowns = {}
         self.refreshing = False
+        self.gallery_dialog = None
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         outer.append(header)
@@ -37,6 +39,9 @@ class SoundSettings(Adw.Dialog):
         body.append(row)
         self.extension_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.append(self.extension_box)
+        download = Gtk.Button(label="Download sounds…")
+        download.connect("clicked", self.show_gallery)
+        self.extension_box.append(download)
         for event, title in (("warning", "Heads-up"), ("phase", "Phase change"), ("complete", "Session complete"), ("countdown", "Countdown pip")):
             row = Gtk.Box(spacing=10)
             row.append(Gtk.Label(label=title, xalign=0, width_chars=17))
@@ -85,6 +90,12 @@ class SoundSettings(Adw.Dialog):
         chooser = Gtk.FileDialog(title="Choose sound folder")
         chooser.set_initial_folder(Gio.File.new_for_path(str(self.owner.sound_library.directory)))
         chooser.select_folder(self.owner, None, self.folder_selected)
+
+    def show_gallery(self, *_):
+        self.stop_test()
+        if self.gallery_dialog is None:
+            self.gallery_dialog = GalleryDialog(self)
+        self.gallery_dialog.present(self.owner)
 
     def folder_selected(self, chooser, result):
         try:
@@ -152,4 +163,10 @@ class SoundSettings(Adw.Dialog):
 
     def on_closed(self, *_):
         self.stop_test()
+        self.cancel_gallery()
         self.owner.sound_dialog = None
+
+    def cancel_gallery(self):
+        if self.gallery_dialog:
+            self.gallery_dialog.cancel()
+            self.gallery_dialog.force_close()

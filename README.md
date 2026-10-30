@@ -10,7 +10,7 @@ A small native Linux focus timer built with Python, GTK4, and libadwaita. Dark c
 - A schedule planner that suggests sessions for the time you have available.
 - Advance warnings, distinct chimes, volume control, and desktop notifications.
 - Saved preferences, an application launcher, and optional Hyprland placement.
-- Local operation with no account or network connection.
+- Local timer operation with no account; optional gallery downloads use an internet connection.
 
 Arch Linux is the documented installation target. Other Linux distributions need
 equivalent GTK, Python bindings, and GStreamer packages; they have not been verified.
@@ -57,9 +57,10 @@ Run from a terminal inside your graphical desktop session. The launcher uses Arc
 - Adjust volume, mute tones, or use **Preview**. A visible warning still appears with tones muted. Desktop notifications accompany transitions if your notification service supports them.
 - Open **Sound library & countdown…** to select independent heads-up, phase-change, completion, and countdown sounds. Six generated sounds work offline. Choose a local folder, then **Use folder / Refresh** to scan WAV, OGG, MP3, FLAC, Opus, and M4A files; decoding depends on your installed GStreamer plugins. The default library is `$XDG_DATA_HOME/simplepomodoro/sounds` (normally `~/.local/share/simplepomodoro/sounds`). Files stay in that folder; the app does not copy or delete your sounds.
 - Each sound has a **Preview**. **Test 3 · 2 · 1 + change** auditions synchronized pips followed by the selected phase-change sound. **Stop preview** or closing the form stops playback. Previews explicitly play even with automatic tones muted. Enable **Beep with 3, 2, 1 seconds remaining** for optional countdown cues; countdown files are limited to 300 ms so a long recording cannot mask the phase change. Missing selections fall back to generated sounds, and playback failures appear on screen.
+- In the sound form, **Download sounds…** searches Wikimedia Commons without an account or API key. Enter a term such as `bell` or `beep`, review the creator, source, license, duration, and file size, then choose **Download selected sound**. Search shows up to ten matches and filters unsupported formats/licenses, restrictions, and files over 15 MiB. CC0/public-domain, CC BY, and CC BY-SA sounds are supported; their individual licenses apply. Downloads are explicit, cancellable, and saved to the selected sound folder alongside a `.json` attribution sidecar. Preview the result, close the browser, then assign it to a reminder in the sound form. Ordinary timer operation never searches or downloads automatically.
 - Keep the window open or minimize it while timing. Closing an active timer asks to end the session. Settings persist; a running session does not.
 
-Preferences live in `$XDG_CONFIG_HOME/simplepomodoro/settings.json` (normally `~/.config/simplepomodoro/`). Generated chimes live in `$XDG_CACHE_HOME/simplepomodoro/`. No network connection is used. On Hyprland/Omarchy, the window opens floating, centered, and raised once, sized to its contents with timer and settings side by side. You can then move, resize, or tile it with Win+T. Small screens retain scrolling. This uses `hyprctl` without changing your desktop configuration.
+Preferences live in `$XDG_CONFIG_HOME/simplepomodoro/settings.json` (normally `~/.config/simplepomodoro/`). Generated chimes live in `$XDG_CACHE_HOME/simplepomodoro/`. The timer works offline; only explicit gallery searches/downloads use the network. On Hyprland/Omarchy, the window opens floating, centered, and raised once, sized to its contents with timer and settings side by side. You can then move, resize, or tile it with Win+T. Small screens retain scrolling. This uses `hyprctl` without changing your desktop configuration.
 
 GTK requests idle/suspend inhibition during active sessions; compositor support varies. Sleep pauses the monotonic clock rather than counting suspended time.
 

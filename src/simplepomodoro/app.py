@@ -398,6 +398,7 @@ class Window(Adw.ApplicationWindow):
         self.update_inhibit()
         self.stop_sound_preview()
         if self.sound_dialog:
+            self.sound_dialog.cancel_gallery()
             self.sound_dialog.close()
         GLib.source_remove(self.timeout_id)
         self.save_settings()
