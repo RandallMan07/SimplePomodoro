@@ -10,6 +10,7 @@ A small native Linux focus timer built with Python, GTK4, and libadwaita. Dark c
 - A schedule planner that suggests sessions for the time you have available.
 - Advance warnings, distinct chimes, volume control, and desktop notifications.
 - Saved preferences, an application launcher, and optional Hyprland placement.
+- Follows the current Omarchy desktop palette, including live theme switches.
 - Local operation with no account or network connection.
 
 Arch Linux is the documented installation target. Other Linux distributions need
@@ -56,6 +57,8 @@ Run from a terminal inside your graphical desktop session. The launcher uses Arc
 - **Heads-up** plays one advance chime per phase, seven seconds before the transition by default. Choose 0–60 seconds; 0 disables the advance alert. Phase changes use a distinct chime, and completion uses a third.
 - Adjust volume, mute tones, or use **Preview**. A visible warning still appears with tones muted. Desktop notifications accompany transitions if your notification service supports them.
 - Keep the window open or minimize it while timing. Closing an active timer asks to end the session. Settings persist; a running session does not.
+
+Colors follow `$XDG_CONFIG_HOME/omarchy/current/theme/colors.toml` (normally `~/.config/omarchy/current/theme/colors.toml`) when available. Semantic color names and ANSI `color0`–`color7` slots are supported; light palettes also switch the native controls to light mode. Theme changes apply within about two seconds. Missing or malformed palettes use the original charcoal/mint/lavender colors. No desktop configuration is changed.
 
 Preferences live in `$XDG_CONFIG_HOME/simplepomodoro/settings.json` (normally `~/.config/simplepomodoro/`). Generated chimes live in `$XDG_CACHE_HOME/simplepomodoro/`. No network connection is used. On Hyprland/Omarchy, the window opens floating, centered, and raised once, sized to its contents with timer and settings side by side. You can then move, resize, or tile it with Win+T. Small screens retain scrolling. This uses `hyprctl` without changing your desktop configuration.
 
