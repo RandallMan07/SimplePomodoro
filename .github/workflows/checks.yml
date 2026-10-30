@@ -1,0 +1,27 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Run timer and placement tests
+        run: PYTHONPATH=src python3 -m unittest discover -s tests -v
+      - name: Check launcher syntax
+        run: |
+          bash -n run.sh
+          sh -n packaging/simplepomodoro
+      - name: Build source archive
+        run: python3 packaging/build.py --source-only
+      - name: Verify source checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS

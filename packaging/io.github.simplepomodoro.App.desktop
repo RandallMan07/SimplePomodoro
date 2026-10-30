@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SimplePomodoro
+Comment=Find your rhythm with a native focus and rest timer
+Exec=simplepomodoro
+Icon=io.github.simplepomodoro.App
+Terminal=false
+Categories=Utility;Clock;
+Keywords=pomodoro;focus;timer;productivity;break;
+StartupNotify=true
+StartupWMClass=io.github.simplepomodoro.App

@@ -1,0 +1,33 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+venv/
+
+# Generated archives, packages, and build directories
+/dist/
+/build/
+*.egg-info/
+*.pkg.tar.*
+
+# Local credentials and agent configuration
+/.aws/
+/.agents/
+/.codex/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor and operating-system files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
