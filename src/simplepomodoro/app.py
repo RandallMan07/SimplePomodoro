@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import sys
+import time
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -13,6 +14,7 @@ import cairo
 from .audio import Chimes
 from .core import Config, Timer, propose
 from .desktop import open_floating
+from .session import SessionStore
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,6 +32,10 @@ class Window(Adw.ApplicationWindow):
         self.set_icon_name("io.github.simplepomodoro.App")
         self.settings_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "simplepomodoro/settings.json"
         self.settings = self.load_settings()
+        self.initializing = True
+        self.close_approved = False
+        self.session_store = SessionStore(Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "simplepomodoro/session.json")
+        self.last_checkpoint_seconds = time.monotonic()
         self.timer = Timer()
         self.audio = Chimes(Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "simplepomodoro")
         self.audio_error_seen = None
@@ -72,6 +78,8 @@ class Window(Adw.ApplicationWindow):
         timer_panel.append(overlay)
         self.status = label("Ready when you are.", "hint", wrap=True)
         timer_panel.append(self.status)
+        self.persistence_status = label("", "hint", wrap=True)
+        timer_panel.append(self.persistence_status)
         buttons = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER)
         self.start_button = Gtk.Button(label="Start focus")
         self.start_button.add_css_class("primary")
@@ -145,6 +153,21 @@ class Window(Adw.ApplicationWindow):
             widget.connect("value-changed", self.config_changed)
         self.budget.connect("value-changed", lambda *_: self.save_settings())
         self.config_changed()
+        restored_timer = self.session_store.load()
+        if restored_timer is not None:
+            self.loading = True
+            self.timer = restored_timer
+            self.work.set_value(restored_timer.config.work_minutes)
+            self.rest.set_value(restored_timer.config.rest_minutes)
+            self.repetitions.set_value(restored_timer.config.repetitions)
+            self.warning.set_value(restored_timer.warning_seconds)
+            self.loading = False
+            self.save_settings()
+        if self.session_store.error:
+            self.persistence_status.set_text(self.session_store.error)
+        self.initializing = False
+        self.update_inhibit()
+        self.render()
         # Request the actual content height, then let small screens scroll.
         minimum_width, natural_width, *_ = outer.measure(Gtk.Orientation.HORIZONTAL, -1)
         width = max(900, minimum_width)
@@ -203,6 +226,7 @@ class Window(Adw.ApplicationWindow):
             return
         self.timer.configure(Config(self.work.get_value_as_int(), self.rest.get_value_as_int(), self.repetitions.get_value_as_int()), self.warning.get_value_as_int())
         self.save_settings()
+        self.save_session()
         self.render()
 
     def alert_changed(self, *_):
@@ -210,6 +234,21 @@ class Window(Adw.ApplicationWindow):
             return
         self.timer.warning_seconds = self.warning.get_value_as_int()
         self.save_settings()
+        self.save_session()
+
+    def save_session(self, force=True):
+        if self.initializing:
+            return
+        now_seconds = time.monotonic()
+        if not force and now_seconds - self.last_checkpoint_seconds < 5:
+            return
+        self.last_checkpoint_seconds = now_seconds
+        if self.session_store.save(self.timer):
+            self.persistence_status.set_text("")
+            return True
+        else:
+            self.persistence_status.set_text(self.session_store.error)
+            return False
 
     def plan(self, *_):
         budget = self.budget.get_value_as_int()
@@ -231,12 +270,14 @@ class Window(Adw.ApplicationWindow):
                 self.timer.reset()
             self.timer.start()
         self.update_inhibit()
+        self.save_session()
         self.render()
 
     def reset_timer(self, *_):
         self.timer.reset()
         self.audio.stop()
         self.update_inhibit()
+        self.save_session()
         self.render()
 
     def update_inhibit(self):
@@ -252,7 +293,10 @@ class Window(Adw.ApplicationWindow):
             self.inhibit_requested = False
 
     def tick(self):
-        self.handle_events(self.timer.tick())
+        events = self.timer.tick()
+        self.handle_events(events)
+        if events or self.timer.running:
+            self.save_session(force=bool(events))
         self.update_inhibit()
         self.render()
         if self.audio.error and self.audio.error != self.audio_error_seen:
@@ -331,12 +375,13 @@ class Window(Adw.ApplicationWindow):
             cr.stroke()
 
     def on_close(self, *_):
-        if self.timer.running:
-            dialog = Adw.AlertDialog(heading="End your session?", body="Closing the window stops the timer. Your rhythm settings will be saved.")
-            dialog.add_response("cancel", "Keep focusing")
+        if self.timer.running and not self.close_approved:
+            dialog = Adw.AlertDialog(heading="Save your session?", body="Save and close to continue the countdown when you reopen. No sounds or notifications play while the app is closed. End session discards this countdown.")
+            dialog.add_response("cancel", "Keep open")
+            dialog.add_response("save", "Save and close")
             dialog.add_response("end", "End session")
             dialog.set_response_appearance("end", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("cancel")
+            dialog.set_default_response("save")
             dialog.set_close_response("cancel")
             dialog.connect("response", self.close_response)
             dialog.present(self)
@@ -345,11 +390,20 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def close_response(self, _dialog, response):
-        if response == "end":
-            self.timer.pause()
+        if response in ("save", "end"):
+            if response == "end":
+                self.reset_timer()
+            if not self.save_session():
+                # Keep the window available so an I/O failure is visible and the
+                # user can retry rather than silently losing a running session.
+                return
+            self.close_approved = True
             self.close()
 
     def cleanup(self):
+        # Persist before releasing inhibition and marking the in-memory timer
+        # stopped, so a running session continues across a normal close.
+        self.save_session()
         self.timer.running = False
         self.update_inhibit()
         self.audio.stop()
