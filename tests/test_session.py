@@ -212,7 +212,9 @@ class SessionStoreTests(unittest.TestCase):
 
     def test_corrupt_unicode_json_and_oversized_state_are_nonfatal(self):
         self.path.parent.mkdir()
-        for contents in (b"{", b"\xff", b"null", b"[]", b" " * (MAX_STATE_BYTES + 1)):
+        deeply_nested = b"[" * 1100 + b"0" + b"]" * 1100
+        oversized_number = json.dumps(dict(snapshot(self.timer), saved_at_seconds=10 ** 1000)).encode()
+        for contents in (b"{", b"\xff", b"null", b"[]", deeply_nested, oversized_number, b" " * (MAX_STATE_BYTES + 1)):
             with self.subTest(contents=contents[:10]):
                 self.path.write_bytes(contents)
                 self.assertIsNone(self.store.load())

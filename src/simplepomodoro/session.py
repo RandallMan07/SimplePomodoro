@@ -102,7 +102,7 @@ class SessionStore:
             return restore(json.loads(contents), self.wall_clock, clock)
         except FileNotFoundError:
             return None
-        except (OSError, ValueError, UnicodeError, OverflowError) as error:
+        except (OSError, ValueError, UnicodeError, OverflowError, RecursionError) as error:
             self.error = f"Saved session could not be restored: {error}"
             return None
 
