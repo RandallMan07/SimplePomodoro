@@ -24,6 +24,7 @@ def main():
         app = Adw.Application(application_id="io.github.simplepomodoro.Smoke", flags=Gio.ApplicationFlags.NON_UNIQUE)
         app.register(None)
         window = Window(app)
+        window.present()
         window.audio.play_choice = Mock()
         assert window.timer.config == Config()
         window.budget.set_value(60)
@@ -65,11 +66,15 @@ def main():
         window.save_settings()
         assert Path(directory, "simplepomodoro/settings.json").exists()
         window.close()
+        assert window not in app.get_windows()
+        assert not window.audio.stop_source
         restored = Window(app)
+        restored.present()
         assert restored.warning.get_value_as_int() == 12
         assert restored.sound_selections["phase"] == "builtin:bell"
         assert restored.countdown_enabled
         restored.close()
+        assert restored not in app.get_windows()
         print("PASS: GTK construction, planner, controls, warnings, sound form/preview cancellation, persistence")
     return 0
 
