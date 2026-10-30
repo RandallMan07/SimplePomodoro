@@ -13,6 +13,8 @@ import cairo
 from .audio import Chimes
 from .core import Config, Timer, propose
 from .desktop import open_floating
+from .sounds import CountdownCues, SoundLibrary
+from .sound_settings import SoundSettings
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,6 +34,11 @@ class Window(Adw.ApplicationWindow):
         self.settings = self.load_settings()
         self.timer = Timer()
         self.audio = Chimes(Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "simplepomodoro")
+        self.sound_library = SoundLibrary(self.settings.get("sound_folder"))
+        self.sound_selections = self.sound_library.selections(self.settings.get("sound_selections"))
+        self.countdown_enabled = self.settings.get("countdown_enabled") is True
+        self.countdown_cues = CountdownCues()
+        self.sound_dialog = None
         self.audio_error_seen = None
         self.inhibit_cookie = 0
         self.inhibit_requested = False
@@ -125,7 +132,7 @@ class Window(Adw.ApplicationWindow):
         self.sound.connect("notify::active", self.alert_changed)
         row.append(self.sound)
         self.preview = Gtk.Button(label="Preview")
-        self.preview.connect("clicked", lambda *_: self.audio.play("phase", self.volume.get_value()))
+        self.preview.connect("clicked", lambda *_: self.play_sound("phase"))
         row.append(self.preview)
         alerts.append(row)
         row = Gtk.Box(spacing=12)
@@ -138,6 +145,9 @@ class Window(Adw.ApplicationWindow):
         self.volume.connect("value-changed", self.alert_changed)
         row.append(self.volume)
         alerts.append(row)
+        customize = Gtk.Button(label="Sound library & countdown…")
+        customize.connect("clicked", self.show_sound_settings)
+        alerts.append(customize)
         alerts.append(label("The heads-up also appears on screen. 0 seconds turns it off.", "hint", wrap=True, xalign=0))
         self.set_content(outer)
         self.loading = False
@@ -190,6 +200,8 @@ class Window(Adw.ApplicationWindow):
 
     def save_settings(self):
         data = dict(work=self.work.get_value_as_int(), rest=self.rest.get_value_as_int(), repetitions=self.repetitions.get_value_as_int(), budget=self.budget.get_value_as_int(), warning=self.warning.get_value_as_int(), sound=self.sound.get_active(), volume=self.volume.get_value())
+        data.update(sound_folder=str(self.sound_library.directory), sound_selections=self.sound_selections,
+                    countdown_enabled=self.countdown_enabled)
         try:
             self.settings_file.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.settings_file.with_suffix(".tmp")
@@ -202,6 +214,7 @@ class Window(Adw.ApplicationWindow):
         if getattr(self, "loading", False):
             return
         self.timer.configure(Config(self.work.get_value_as_int(), self.rest.get_value_as_int(), self.repetitions.get_value_as_int()), self.warning.get_value_as_int())
+        self.countdown_cues.reset()
         self.save_settings()
         self.render()
 
@@ -209,7 +222,26 @@ class Window(Adw.ApplicationWindow):
         if not hasattr(self, "volume"):
             return
         self.timer.warning_seconds = self.warning.get_value_as_int()
+        if not self.sound.get_active():
+            self.stop_sound_preview()
         self.save_settings()
+
+    def show_sound_settings(self, *_):
+        if self.sound_dialog is None:
+            self.sound_dialog = SoundSettings(self)
+        self.sound_dialog.present(self)
+
+    def stop_sound_preview(self):
+        if self.sound_dialog:
+            self.sound_dialog.stop_test()
+        self.audio.stop()
+
+    def play_sound(self, event):
+        selected = self.sound_selections.get(event)
+        sound = self.sound_library.resolve(selected, event)
+        self.audio.play_choice(sound, self.volume.get_value(), 300 if event == "countdown" else None)
+        if selected != sound.id:
+            self.plan_result.set_text("A selected sound is missing. Playing the built-in sound instead.")
 
     def plan(self, *_):
         budget = self.budget.get_value_as_int()
@@ -224,18 +256,22 @@ class Window(Adw.ApplicationWindow):
         self.plan_result.set_text(f"{config.work_minutes} min focus + {config.rest_minutes} min rest × {config.repetitions} rounds. {spare} min spare. Applied to your rhythm.")
 
     def toggle_timer(self, *_):
+        self.stop_sound_preview()
         if self.timer.running:
             self.handle_events(self.timer.pause())
         else:
             if self.timer.finished:
                 self.timer.reset()
+                self.countdown_cues.reset()
+            self.countdown_cues.prime(self.timer)
             self.timer.start()
         self.update_inhibit()
         self.render()
 
     def reset_timer(self, *_):
         self.timer.reset()
-        self.audio.stop()
+        self.countdown_cues.reset()
+        self.stop_sound_preview()
         self.update_inhibit()
         self.render()
 
@@ -252,7 +288,13 @@ class Window(Adw.ApplicationWindow):
             self.inhibit_requested = False
 
     def tick(self):
-        self.handle_events(self.timer.tick())
+        events = self.timer.tick()
+        cue = self.countdown_cues.observe(self.timer)
+        self.handle_events(events)
+        if cue is not None and self.countdown_enabled and self.sound.get_active() and not any(event in events for event in ("phase", "complete")):
+            if self.sound_dialog:
+                self.sound_dialog.stop_test()
+            self.play_sound("countdown")
         self.update_inhibit()
         self.render()
         if self.audio.error and self.audio.error != self.audio_error_seen:
@@ -267,7 +309,9 @@ class Window(Adw.ApplicationWindow):
         # Coalesce delayed transitions into a single current alert.
         event = "complete" if "complete" in events else "phase" if "phase" in events else "warning"
         if self.sound.get_active():
-            self.audio.play(event, self.volume.get_value())
+            if self.sound_dialog:
+                self.sound_dialog.stop_test()
+            self.play_sound(event)
         if event != "warning":
             title = "Session complete" if self.timer.finished else "Time to focus" if self.timer.is_work else "Time for a break"
             notification = Gio.Notification.new(title)
@@ -352,7 +396,9 @@ class Window(Adw.ApplicationWindow):
     def cleanup(self):
         self.timer.running = False
         self.update_inhibit()
-        self.audio.stop()
+        self.stop_sound_preview()
+        if self.sound_dialog:
+            self.sound_dialog.close()
         GLib.source_remove(self.timeout_id)
         self.save_settings()
 
