@@ -13,7 +13,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from simplepomodoro.app import Window
 from simplepomodoro.core import Config
-from simplepomodoro.gallery import CommonsSound
+from simplepomodoro.gallery import GallerySound
 
 
 def main():
@@ -62,9 +62,16 @@ def main():
         assert window.audio.play_choice.call_args.args[0].id == "builtin:bell"
         dialog.show_gallery()
         gallery = dialog.gallery_dialog
-        result = CommonsSound("Test bell", "Example", "https://commons.wikimedia.org/wiki/File:Bell.ogg",
+        assert gallery.purpose() == "reminder"
+        gallery.query.set_text("bell & pip")
+        assert "q=bell+%26+pip" in gallery.browser_button.get_uri()
+        gallery.api_key_entry.set_text("testcredential123456")
+        gallery.save_key()
+        assert not gallery.api_key_entry.get_text()
+        gallery.clear_key()
+        result = GallerySound("Test bell", "Example", "https://freesound.org/people/Example/sounds/123/",
                               "CC0", "https://creativecommons.org/publicdomain/zero/1.0/",
-                              "https://upload.wikimedia.org/wikipedia/commons/a/aa/Bell.ogg", 4, 1.0, "application/ogg")
+                              "https://cdn.freesound.org/previews/1/123_456-hq.ogg", None, 0.2, "audio/ogg", 123, 0.01)
         gallery.gallery.search = Mock(return_value=[result])
         gallery.query.set_text("bell")
         gallery.search()

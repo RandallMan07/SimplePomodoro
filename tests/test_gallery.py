@@ -1,44 +1,47 @@
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
 import unittest
-from urllib.error import URLError
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request
 from unittest.mock import patch
 
-from simplepomodoro.gallery import (API_URL, Cancelled, CommonsGallery, CommonsSound,
-                                   GalleryError, MAX_AUDIO_BYTES, MAX_JSON_BYTES, _Redirects,
-                                   allowed_license)
+from simplepomodoro.gallery import (API_URL, Cancelled, FreesoundGallery, GalleryError,
+                                   MAX_AUDIO_BYTES, _Redirects, browser_search_url)
+from simplepomodoro.freesound_credentials import (clear_api_key, credentials_path,
+                                                 load_api_key, save_api_key)
 from simplepomodoro.sounds import SoundLibrary
 
 
-AUDIO_URL = "https://upload.wikimedia.org/wikipedia/commons/a/aa/Bell.ogg"
-SOURCE_URL = "https://commons.wikimedia.org/wiki/File:Bell.ogg"
-LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/"
+AUDIO_URL = "https://cdn.freesound.org/previews/1/123_456-hq.ogg"
+SOURCE_URL = "https://freesound.org/people/Example/sounds/123/"
+LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/"
 AUDIO = b"OggS" + b"\x00" * 32
+TOKEN = "testcredential123456"
 
 
-def page(**info_overrides):
-    info = dict(url=AUDIO_URL, descriptionurl=SOURCE_URL, size=len(AUDIO), duration=2.5,
-                mime="application/ogg", extmetadata=dict(
-                    Artist={"value": '<a href="//commons.wikimedia.org/wiki/User:Example">Example &amp; artist</a>'},
-                    LicenseShortName={"value": "CC BY-SA 4.0"},
-                    LicenseUrl={"value": LICENSE_URL}))
-    info.update(info_overrides)
-    return dict(title="File:Bell.ogg", index=1, imageinfo=[info])
+def item(**overrides):
+    result = dict(id=123, name="Test bell", url=SOURCE_URL, username="Example",
+                  license=LICENSE_URL, duration=0.2, start_time=0.01,
+                  previews={"preview-hq-ogg": AUDIO_URL})
+    result.update(overrides)
+    return result
 
 
 def sound():
-    return CommonsGallery._parse(page())
+    return FreesoundGallery._parse(item())
 
 
 class Response(io.BytesIO):
     def __init__(self, data, url=AUDIO_URL, headers=None):
         super().__init__(data)
         self.url = url
-        self.headers = headers or {"Content-Type": "application/ogg", "Content-Length": str(len(data))}
+        self.headers = headers if headers is not None else {"Content-Type": "audio/ogg", "Content-Length": str(len(data))}
 
     def geturl(self):
         return self.url
@@ -47,138 +50,103 @@ class Response(io.BytesIO):
 class Opener:
     def __init__(self, response):
         self.response = response
-        self.calls = []
+        self.requests = []
 
     def open(self, request, timeout):
-        self.calls.append((request.full_url, timeout))
+        self.requests.append(request)
         return self.response
 
 
-class SearchTests(unittest.TestCase):
-    def test_search_audio_filter_strips_html_and_accepts_ogg(self):
-        payload = dict(query=dict(pages={"1": page()}))
-        opener = Opener(Response(json.dumps(payload).encode(), API_URL))
-        found = CommonsGallery(opener).search("bell")
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].author, "Example & artist")
-        self.assertEqual(found[0].duration_seconds, 2.5)
-        self.assertIn("filetype%3Aaudio+bell", opener.calls[0][0])
-        self.assertGreater(opener.calls[0][1], 0)
+class FreesoundTests(unittest.TestCase):
+    def test_key_in_header_only_and_short_sound_filters(self):
+        opener = Opener(Response(json.dumps({"results": [item()]}).encode(), API_URL))
+        results = FreesoundGallery(opener, TOKEN).search("bell", purpose="countdown")
+        self.assertEqual(results[0].sound_id, 123)
+        self.assertIsNone(results[0].size_bytes)  # Original filesize is not preview size.
+        request = opener.requests[0]
+        self.assertEqual(request.get_header("Authorization"), "Token " + TOKEN)
+        self.assertNotIn(TOKEN, request.full_url)
+        query = parse_qs(urlsplit(request.full_url).query)
+        self.assertIn("duration:[0.05 TO 0.3]", query["filter"][0])
+        self.assertIn("start_time:[0 TO 0.03]", query["filter"][0])
+        self.assertIn("start_time", query["fields"][0])
 
-    def test_search_excludes_bad_source_formats_sizes_and_licenses(self):
-        variants = [page(url="https://evil.invalid/Bell.ogg"), page(url=AUDIO_URL.replace("https:", "http:")),
-                    page(size=MAX_AUDIO_BYTES + 1), page(mime="text/html"),
-                    page(descriptionurl="https://evil.invalid/source"), page(url=AUDIO_URL + ".txt"),
-                    page(extmetadata=dict(LicenseUrl={"value": "https://creativecommons.org/licenses/by-nc/4.0/"})),
-                    page(extmetadata=dict(LicenseUrl={"value": LICENSE_URL}, Restrictions={"value": "trademark"}))]
-        for variant in variants:
-            with self.subTest(variant=variant):
-                self.assertIsNone(CommonsGallery._parse(variant))
+    def test_no_key_and_auth_failures_are_actionable(self):
+        with self.assertRaisesRegex(GalleryError, "Search in browser"):
+            FreesoundGallery(api_key="").search("bell")
+        class Unauthorized:
+            def open(self, request, timeout):
+                raise HTTPError(request.full_url, 401, "auth failure", {}, None)
+        with self.assertRaisesRegex(GalleryError, "rejected the API key") as failure:
+            FreesoundGallery(Unauthorized(), TOKEN).search("bell")
+        self.assertNotIn(TOKEN, str(failure.exception))
 
-    def test_plain_public_domain_label_is_normalized(self):
-        parsed = CommonsGallery._parse(page(extmetadata=dict(LicenseShortName={"value": "Public domain"})))
-        self.assertEqual(parsed.license_url, "https://creativecommons.org/publicdomain/mark/1.0/")
-        self.assertTrue(allowed_license(parsed.license_url))
+    def test_long_late_onset_bad_license_and_missing_analysis(self):
+        for invalid in (item(duration=442), item(start_time=0.1), item(start_time=None),
+                        item(license="https://creativecommons.org/licenses/by-nc/4.0/"),
+                        item(previews={"preview-hq-ogg": "https://evil.invalid/audio.ogg"})):
+            self.assertIsNone(FreesoundGallery._parse(invalid, "countdown"))
+        self.assertIsNotNone(FreesoundGallery._parse(item(start_time=None), "reminder"))
+        opener = Opener(Response(json.dumps({"results": [item(start_time=None)]}).encode(), API_URL))
+        gallery = FreesoundGallery(opener, TOKEN)
+        self.assertEqual(gallery.search("pip", purpose="countdown"), [])
+        self.assertIn("no onset analysis", gallery.notice)
 
-    def test_bad_json_and_oversized_response_are_actionable(self):
-        for data in (b"<html>error</html>", b"x" * (MAX_JSON_BYTES + 1)):
+    def test_browser_query_filters_encoded_without_key(self):
+        url = browser_search_url("bell & chime", "countdown")
+        values = parse_qs(urlsplit(url).query)
+        self.assertEqual(values["q"], ["bell & chime"])
+        self.assertIn("duration:[0.05 TO 0.3]", values["f"][0])
+        self.assertNotIn("token", values)
+
+    def test_redirect_never_forwards_token_to_cdn_or_external_host(self):
+        request = Request(API_URL, headers={"Authorization": "Token " + TOKEN})
+        for url in (AUDIO_URL, "https://evil.invalid/audio.ogg", "http://freesound.org/search/"):
             with self.assertRaises(GalleryError):
-                CommonsGallery(Opener(Response(data, API_URL))).search("bell")
+                _Redirects().redirect_request(request, None, 302, "redirect", {}, url)
 
-    def test_error_empty_query_cancel_and_network_failure(self):
-        for query in ("", "x" * 121):
-            with self.assertRaises(GalleryError):
-                CommonsGallery().search(query)
-        cancelled = threading.Event()
-        cancelled.set()
-        opener = Opener(None)
-        with self.assertRaises(Cancelled):
-            CommonsGallery(opener).search("bell", cancelled)
-        self.assertFalse(opener.calls)
-        class Offline:
-            def open(self, *args, **kwargs):
-                raise URLError("offline")
-        with self.assertRaisesRegex(GalleryError, "Check your connection"):
-            CommonsGallery(Offline()).search("bell")
-
-    def test_redirects_reject_external_host_before_following(self):
-        with self.assertRaises(GalleryError):
-            _Redirects().redirect_request(None, None, 302, "redirect", {}, "https://evil.invalid/file.ogg")
-        with self.assertRaises(GalleryError):
-            CommonsGallery(Opener(Response(b"", "https://evil.invalid/file.ogg"))).search("bell")
-
-
-class DownloadTests(unittest.TestCase):
-    def test_complete_audio_and_attribution_join_library_without_clobber(self):
+    def test_preview_download_records_actual_size_source_and_no_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
-            existing = Path(directory) / "Bell.ogg"
-            existing.write_bytes(b"existing")
-            gallery = CommonsGallery(Opener(Response(AUDIO)))
-            destination = gallery.download(sound(), directory)
-            self.assertEqual(destination.read_bytes(), AUDIO)
-            self.assertEqual(existing.read_bytes(), b"existing")
-            metadata = json.loads(destination.with_name(destination.name + ".json").read_text())
-            self.assertEqual(metadata["author"], "Example & artist")
+            opener = Opener(Response(AUDIO))
+            path = FreesoundGallery(opener, TOKEN).download(sound(), directory)
+            self.assertIsNone(opener.requests[0].get_header("Authorization"))
+            self.assertEqual(path.read_bytes(), AUDIO)
+            metadata_text = path.with_name(path.name + ".json").read_text()
+            metadata = json.loads(metadata_text)
+            self.assertEqual(metadata["size_bytes"], len(AUDIO))
+            self.assertEqual(metadata["sound_id"], 123)
+            self.assertEqual(metadata["download_kind"], "preview")
             self.assertEqual(metadata["source_url"], SOURCE_URL)
-            self.assertEqual(metadata["license_url"], LICENSE_URL)
-            self.assertEqual(metadata["audio_url"], AUDIO_URL)
-            self.assertIn("downloaded_at", metadata)
-            self.assertEqual(SoundLibrary(directory).resolve(f"file:{destination.name}").path, destination)
-            self.assertFalse(list(Path(directory).glob("*.part")))
+            self.assertNotIn(TOKEN, metadata_text)
+            self.assertEqual(SoundLibrary(directory).resolve("file:" + path.name).path, path)
 
-    def assert_failure_leaves_no_files(self, response, expected=GalleryError, cancel=None):
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaises(expected):
-                CommonsGallery(Opener(response)).download(sound(), directory, cancel)
-            self.assertEqual(list(Path(directory).iterdir()), [])
-
-    def test_mismatched_length_empty_and_html_rejected(self):
-        self.assert_failure_leaves_no_files(Response(AUDIO, headers={"Content-Type": "audio/ogg", "Content-Length": "2"}))
-        self.assert_failure_leaves_no_files(Response(b"", headers={"Content-Type": "application/ogg"}))
-        self.assert_failure_leaves_no_files(Response(b"<html>error</html>", headers={"Content-Type": "application/ogg"}))
-        self.assert_failure_leaves_no_files(Response(AUDIO, headers={"Content-Type": "text/html"}))
-        self.assert_failure_leaves_no_files(Response(AUDIO[:-1], headers={"Content-Type": "application/ogg"}))
-
-    def test_cancellation_during_read_cleans_partial_download(self):
+    def test_cancel_incomplete_and_oversize_cleanup(self):
         cancel = threading.Event()
         class CancelResponse(Response):
             def read(self, *args):
                 result = super().read(*args)
                 cancel.set()
                 return result
-        self.assert_failure_leaves_no_files(CancelResponse(AUDIO), Cancelled, cancel)
-
-    def test_invalid_manual_result_is_rejected_before_network(self):
-        opener = Opener(None)
-        with tempfile.TemporaryDirectory() as directory:
-            for invalid in (replace(sound(), audio_url="http://upload.wikimedia.org/audio.ogg"),
-                            replace(sound(), size_bytes=MAX_AUDIO_BYTES + 1),
-                            replace(sound(), license_url="https://evil.invalid/license")):
+        cases = [(CancelResponse(AUDIO), cancel),
+                 (Response(AUDIO, headers={"Content-Type": "audio/ogg", "Content-Length": "1000"}), None),
+                 (Response(AUDIO, headers={"Content-Type": "audio/ogg", "Content-Length": str(MAX_AUDIO_BYTES + 1)}), None)]
+        for response, cancellation in cases:
+            with tempfile.TemporaryDirectory() as directory:
                 with self.assertRaises(GalleryError):
-                    CommonsGallery(opener).download(invalid, directory)
-        self.assertFalse(opener.calls)
+                    FreesoundGallery(Opener(response), TOKEN).download(sound(), directory, cancellation)
+                self.assertEqual(list(Path(directory).iterdir()), [])
 
-    def test_cancellation_between_publication_steps_removes_metadata(self):
-        import os
-        cancel = threading.Event()
-        original_link = os.link
-        def cancel_after_link(source, destination):
-            original_link(source, destination)
-            cancel.set()
-        with patch("simplepomodoro.gallery.os.link", side_effect=cancel_after_link):
-            self.assert_failure_leaves_no_files(Response(AUDIO), Cancelled, cancel)
-
-    def test_filename_collision_never_overwrites_existing_audio(self):
+    def test_private_key_save_clear_and_environment_precedence(self):
         with tempfile.TemporaryDirectory() as directory:
-            existing = Path(directory) / "Bell-collision.ogg"
-            existing.write_bytes(b"keep me")
-            class Identifier:
-                hex = "collision"
-            with patch("simplepomodoro.gallery.uuid.uuid4", return_value=Identifier()):
-                with self.assertRaises(GalleryError):
-                    CommonsGallery(Opener(Response(AUDIO))).download(sound(), directory)
-            self.assertEqual(existing.read_bytes(), b"keep me")
-            self.assertEqual(list(Path(directory).iterdir()), [existing])
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": directory, "FREESOUND_API_KEY": ""}):
+                save_api_key(TOKEN)
+                self.assertEqual(credentials_path().stat().st_mode & 0o777, 0o600)
+                self.assertEqual(load_api_key(), TOKEN)
+                with patch.dict(os.environ, {"FREESOUND_API_KEY": "environmentexample123"}):
+                    self.assertEqual(load_api_key(), "environmentexample123")
+                    clear_api_key()
+                    self.assertEqual(load_api_key(), "environmentexample123")
+                self.assertEqual(load_api_key(), "")
 
 
 if __name__ == "__main__":
