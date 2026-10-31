@@ -4,43 +4,54 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk, Pango
+from .gallery_dialog import GalleryDialog
 
 class SoundSettings(Adw.Dialog):
     def __init__(self, owner):
-        super().__init__(title="Sound library", content_width=650, content_height=580)
+        super().__init__(title="Sound library", content_width=640, content_height=440)
         self.owner = owner
         self.test_source = 0
         self.test_step = 0
         self.dropdowns = {}
         self.refreshing = False
+        self.gallery_dialog = None
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         outer.append(header)
-        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True)
+        self.scroll = scroll
         outer.append(scroll)
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16,
-                       margin_top=16, margin_bottom=20, margin_start=20, margin_end=20)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9,
+                       margin_top=10, margin_bottom=14, margin_start=18, margin_end=18)
         scroll.set_child(body)
-        body.append(Gtk.Label(label="Choose sounds for each reminder. Preview always plays at your current volume, even when automatic tones are muted.", wrap=True, xalign=0))
         self.folder = Gtk.Entry(text=str(owner.sound_library.directory), hexpand=True)
         self.folder.set_tooltip_text("Local folder containing WAV, OGG, MP3, FLAC, Opus, or M4A sounds")
-        body.append(Gtk.Label(label="Sound folder", xalign=0))
         row = Gtk.Box(spacing=8)
+        row.append(Gtk.Label(label="Folder"))
         row.append(self.folder)
         browse = Gtk.Button(label="Browse…")
         browse.connect("clicked", self.choose_folder)
         row.append(browse)
-        refresh = Gtk.Button(label="Use folder / Refresh")
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Use folder / Refresh")
         refresh.connect("clicked", self.change_folder)
         row.append(refresh)
         body.append(row)
         self.extension_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.append(self.extension_box)
+        download = Gtk.Button(label="Download sounds…")
+        download.connect("clicked", self.show_gallery)
+        self.extension_box.append(download)
+        download.set_halign(Gtk.Align.CENTER)
         for event, title in (("warning", "Heads-up"), ("phase", "Phase change"), ("complete", "Session complete"), ("countdown", "Countdown pip")):
             row = Gtk.Box(spacing=10)
-            row.append(Gtk.Label(label=title, xalign=0, width_chars=17))
+            row.append(Gtk.Label(label=title, xalign=0, width_chars=14))
             dropdown = Gtk.DropDown(hexpand=True)
+            factory = Gtk.SignalListItemFactory()
+            factory.connect("setup", lambda _factory, item: item.set_child(Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=28)))
+            factory.connect("bind", lambda _factory, item: item.get_child().set_text(item.get_item().get_string()))
+            dropdown.set_factory(factory)
+            dropdown.set_list_factory(factory)
             dropdown.connect("notify::selected", self.selection_changed, event)
             self.dropdowns[event] = dropdown
             row.append(dropdown)
@@ -54,7 +65,7 @@ class SoundSettings(Adw.Dialog):
         self.countdown.connect("notify::active", self.countdown_changed)
         row.append(self.countdown)
         body.append(row)
-        body.append(Gtk.Label(label="Countdown pips are limited to 300 ms. The heads-up and phase-change sounds remain independent.", wrap=True, xalign=0))
+        self.countdown.set_tooltip_text("Play the selected countdown pip at 3, 2, 1; maximum 300 ms each")
         row = Gtk.Box(spacing=10)
         test = Gtk.Button(label="Test 3 · 2 · 1 + change")
         test.connect("clicked", self.start_test)
@@ -63,7 +74,7 @@ class SoundSettings(Adw.Dialog):
         stop.connect("clicked", lambda *_: self.stop_test())
         row.append(stop)
         body.append(row)
-        self.status = Gtk.Label(wrap=True, xalign=0)
+        self.status = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, max_width_chars=64)
         body.append(self.status)
         self.set_child(outer)
         self.refresh_choices()
@@ -79,12 +90,20 @@ class SoundSettings(Adw.Dialog):
             dropdown.set_selected(next(i for i, sound in enumerate(self.choices) if sound.id == selection))
             self.owner.sound_selections[event] = selection
         self.refreshing = False
-        self.status.set_text(self.owner.sound_library.error or f"{len(self.choices)} sounds available. Changes are saved immediately.")
+        message = self.owner.sound_library.error or f"{len(self.choices)} sounds · changes saved automatically"
+        self.status.set_text(message)
+        self.status.set_tooltip_text(message)
 
     def choose_folder(self, *_):
         chooser = Gtk.FileDialog(title="Choose sound folder")
         chooser.set_initial_folder(Gio.File.new_for_path(str(self.owner.sound_library.directory)))
         chooser.select_folder(self.owner, None, self.folder_selected)
+
+    def show_gallery(self, *_):
+        self.stop_test()
+        if self.gallery_dialog is None:
+            self.gallery_dialog = GalleryDialog(self)
+        self.gallery_dialog.present(self.owner)
 
     def folder_selected(self, chooser, result):
         try:
@@ -152,4 +171,10 @@ class SoundSettings(Adw.Dialog):
 
     def on_closed(self, *_):
         self.stop_test()
+        self.cancel_gallery()
         self.owner.sound_dialog = None
+
+    def cancel_gallery(self):
+        if self.gallery_dialog:
+            self.gallery_dialog.cancel()
+            self.gallery_dialog.force_close()
