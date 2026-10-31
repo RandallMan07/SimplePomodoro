@@ -17,6 +17,7 @@ if LAYER_LIBRARY is not None:
 
 FADE_DURATION_SECONDS = 0.16
 LEAVE_GRACE_MS = 180
+SUMMARY_GAP_PX = 6
 
 
 def widget_available():
@@ -98,10 +99,11 @@ class SummaryWidget(Gtk.Window):
         monitor = self.get_display().get_monitor_at_surface(surface)
         if monitor is not None and LayerShell.get_monitor(self.bar_window) != monitor:
             LayerShell.set_monitor(self.bar_window, monitor)
-        if LayerShell.get_margin(self.bar_window, LayerShell.Edge.TOP) != height:
-            LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, height)
+        summary_top_margin = height + SUMMARY_GAP_PX
+        if LayerShell.get_margin(self.bar_window, LayerShell.Edge.TOP) != summary_top_margin:
+            LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, summary_top_margin)
         # Only map after the arrow has real geometry, so the summary starts
-        # directly below it. Both surfaces remain fixed throughout hover fades.
+        # below it with a small gap. Both surfaces stay fixed during hover fades.
         if not self.bar_window.get_visible():
             self.bar_window.set_visible(True)
             self.set_bar_input(self.expanded)
