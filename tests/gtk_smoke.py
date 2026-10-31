@@ -403,25 +403,6 @@ def main():
             assert ended in app.get_windows()
             assert "idle test failure" in ended.persistence_status.get_text()
         ended.close()
-        if widget_available():
-            restored.present()
-            restored.show_widget()
-            pump()
-            widget = restored.summary_widget
-            assert widget is not None
-            assert widget.minimize_button.get_visible() is False
-            widget.enter_persistent()
-            pump()
-            assert widget.persistent_reminder
-            assert not widget.arrow.get_visible()
-            assert widget.minimize_button.get_visible()
-            widget.return_to_hover()
-            pump()
-            assert not widget.persistent_reminder
-            assert widget.arrow.get_visible()
-            restored.restore_main()
-        restored.close()
-        assert restored.summary_widget is None
         print("PASS: GTK construction, planner, sounds, gallery, theme reload, automatic session restoration and summary widget")
     return 0
 

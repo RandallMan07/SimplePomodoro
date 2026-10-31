@@ -23,16 +23,16 @@ Once published, the GitHub **Releases** page provides these downloads:
 
 | File | Purpose |
 | --- | --- |
-| `simplepomodoro-0.1.0-1-any.pkg.tar.zst` | Installable Arch Linux package; system dependencies are installed by pacman. |
-| `simplepomodoro-0.1.0.tar.gz` | Source, required assets, tests, documentation, and local package recipe. |
+| `simplepomodoro-0.1.1-1-any.pkg.tar.zst` | Installable Arch Linux package; system dependencies are installed by pacman. |
+| `simplepomodoro-0.1.1.tar.gz` | Source, required assets, tests, documentation, and local package recipe. |
 | `SHA256SUMS` | SHA-256 checksums of the release downloads. |
 
 Download the package and `SHA256SUMS` to the same directory. Verify the package's
 checksum (the filter allows you to download just the package), then install:
 
 ```sh
-grep '  simplepomodoro-0.1.0-1-any.pkg.tar.zst$' SHA256SUMS | sha256sum --check --strict -
-sudo pacman -U ./simplepomodoro-0.1.0-1-any.pkg.tar.zst
+grep '  simplepomodoro-0.1.1-1-any.pkg.tar.zst$' SHA256SUMS | sha256sum --check --strict -
+sudo pacman -U ./simplepomodoro-0.1.1-1-any.pkg.tar.zst
 ```
 
 Checksums detect corruption; they are not a cryptographic signature from the author.
@@ -96,7 +96,7 @@ Project decisions and implementation notes are recorded in [docs/decisions.md](d
 # Install build tooling if needed:
 sudo pacman -S --needed base-devel desktop-file-utils
 python packaging/build.py
-sudo pacman -U dist/simplepomodoro-0.1.0-1-any.pkg.tar.zst
+sudo pacman -U dist/simplepomodoro-0.1.1-1-any.pkg.tar.zst
 ```
 
 The build runs the unit tests and validates the desktop entry. After installation, open **SimplePomodoro** in Omarchy's app launcher, or run `simplepomodoro`. Close an existing source-launched instance before opening the installed version. Rebuild and run the same pacman command to update. Uninstall with `sudo pacman -R simplepomodoro`; your preferences remain in your home directory.
@@ -114,8 +114,8 @@ stylesheets in `assets/` are tracked because the application uses them at runtim
 
 ## Publishing and contributing
 
-Follow [the first-release guide](docs/releasing.md) to initialize Git, publish to
-GitHub, tag `0.1.0`, and attach downloads to a Release. See
+Follow [the release guide](docs/releasing.md) to validate a release and prepare
+its downloads. See
 [CHANGELOG.md](CHANGELOG.md) for release notes and
 [docs/verification.md](docs/verification.md) for graphical checks and limitations.
 GitHub Actions runs the unit tests and source archive checks on pushes and pull requests.
