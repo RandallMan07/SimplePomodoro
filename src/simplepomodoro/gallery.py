@@ -15,7 +15,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 
 from .sounds import SUPPORTED_EXTENSIONS
-from .freesound_credentials import load_api_key
+from .freesound_credentials import CredentialError, load_api_key
 
 API_URL = "https://freesound.org/apiv2/search/"
 MEDIA_HOSTS = ("cdn.freesound.org", "freesound.org")
@@ -142,7 +142,10 @@ class FreesoundGallery:
         self.notice = ""
         if not query or len(query) > 120:
             raise GalleryError("Enter a search between 1 and 120 characters.")
-        api_key = self.api_key if self.api_key is not None else load_api_key()
+        try:
+            api_key = self.api_key if self.api_key is not None else load_api_key()
+        except CredentialError as error:
+            raise GalleryError(str(error)) from None
         if not api_key:
             raise GalleryError("Set your Freesound API key in API key setup, or use Search in browser without a key.")
         if purpose not in CUE_LIMITS:

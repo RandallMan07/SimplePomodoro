@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 from simplepomodoro.gallery import (API_URL, Cancelled, FreesoundGallery, GalleryError,
                                    MAX_AUDIO_BYTES, _Redirects, browser_search_url)
-from simplepomodoro.freesound_credentials import (clear_api_key, credentials_path,
-                                                 load_api_key, save_api_key)
+from simplepomodoro.freesound_credentials import (CredentialError, clear_api_key, credentials_path,
+                                                 load_api_key, migrate_api_key, save_api_key, use_session_key)
 from simplepomodoro.sounds import SoundLibrary
 
 
@@ -136,17 +136,37 @@ class FreesoundTests(unittest.TestCase):
                     FreesoundGallery(Opener(response), TOKEN).download(sound(), directory, cancellation)
                 self.assertEqual(list(Path(directory).iterdir()), [])
 
-    def test_private_key_save_clear_and_environment_precedence(self):
+    def test_keyring_store_migrates_only_after_success_and_session_is_explicit(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        secret = Mock()
+        secret.COLLECTION_DEFAULT = "default"
+        secret.password_store_sync.return_value = True
+        secret.password_lookup_sync.return_value = TOKEN
+        gio = SimpleNamespace(Cancellable=Mock)
         with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"XDG_CONFIG_HOME": directory, "FREESOUND_API_KEY": ""}):
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": directory, "FREESOUND_API_KEY": ""}), \
+                 patch("simplepomodoro.freesound_credentials._secret", return_value=(secret, gio, "schema")), \
+                 patch("simplepomodoro.freesound_credentials._session_key", ""):
                 save_api_key(TOKEN)
-                self.assertEqual(credentials_path().stat().st_mode & 0o777, 0o600)
+                self.assertFalse(credentials_path().exists())  # No new plaintext storage.
                 self.assertEqual(load_api_key(), TOKEN)
+                credentials_path().parent.mkdir(parents=True, exist_ok=True)
+                credentials_path().write_text(json.dumps({"api_key": TOKEN}))
+                secret.password_store_sync.return_value = False
+                with self.assertRaises(CredentialError):
+                    migrate_api_key()
+                self.assertTrue(credentials_path().exists())
+                secret.password_store_sync.return_value = True
+                migrate_api_key()
+                self.assertFalse(credentials_path().exists())
+                self.assertEqual(secret.password_store_sync.call_args.args[2], "default")
+                use_session_key("sessionexample123456")
+                self.assertEqual(load_api_key(), "sessionexample123456")
                 with patch.dict(os.environ, {"FREESOUND_API_KEY": "environmentexample123"}):
                     self.assertEqual(load_api_key(), "environmentexample123")
-                    clear_api_key()
-                    self.assertEqual(load_api_key(), "environmentexample123")
-                self.assertEqual(load_api_key(), "")
+                clear_api_key()
+                secret.password_clear_sync.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import os
 import json
 import threading
 import time
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -60,75 +60,85 @@ def main():
         assert not dialog.test_source
         dialog.preview(None, "phase")
         assert window.audio.play_choice.call_args.args[0].id == "builtin:bell"
-        dialog.show_gallery()
-        gallery = dialog.gallery_dialog
-        assert gallery.purpose() == "reminder"
-        gallery.query.set_text("bell & pip")
-        assert "q=bell+%26+pip" in gallery.browser_button.get_uri()
-        gallery.api_key_entry.set_text("testcredential123456")
-        gallery.save_key()
-        assert not gallery.api_key_entry.get_text()
-        gallery.clear_key()
-        result = GallerySound("Test bell", "Example", "https://freesound.org/people/Example/sounds/123/",
-                              "CC0", "https://creativecommons.org/publicdomain/zero/1.0/",
-                              "https://cdn.freesound.org/previews/1/123_456-hq.ogg", None, 0.2, "audio/ogg", 123, 0.01)
-        gallery.gallery.search = Mock(return_value=[result])
-        gallery.query.set_text("bell")
-        gallery.search()
-        context = GLib.MainContext.default()
-        deadline = time.monotonic() + 2
-        while gallery.cancel_button.get_sensitive() and time.monotonic() < deadline:
-            while context.pending():
-                context.iteration(False)
-            time.sleep(0.01)
-        assert gallery.selected() == result
-        assert "Example" in gallery.details.get_text()
-        downloaded = window.sound_library.directory / "test-download.ogg"
-        def fake_download(_result, folder, cancel):
-            assert folder == window.sound_library.directory
-            downloaded.write_bytes(b"OggS")
-            downloaded.with_name(downloaded.name + ".json").write_text(json.dumps({"author": "Example"}))
-            return downloaded
-        gallery.gallery.download = Mock(side_effect=fake_download)
-        gallery.download()
-        deadline = time.monotonic() + 2
-        while gallery.cancel_button.get_sensitive() and time.monotonic() < deadline:
-            while context.pending():
-                context.iteration(False)
-            time.sleep(0.01)
-        assert gallery.downloaded == downloaded
-        assert any(choice.id == "file:test-download.ogg" for choice in dialog.choices)
-        gallery.preview()
-        assert window.audio.play_choice.call_args.args[0].path == downloaded
-        stale_file = window.sound_library.directory / "stale.ogg"
-        stale_file.write_bytes(b"OggS")
-        stale_file.with_name(stale_file.name + ".json").write_text("{}")
-        stale_cancel = threading.Event()
-        stale_cancel.set()
-        gallery.finish_operation(gallery.generation - 1, stale_cancel, window.sound_library.directory,
-                                 lambda *_: (_ for _ in ()).throw(AssertionError("stale callback")), stale_file, None)
-        assert not stale_file.exists()
-        started = threading.Event()
-        released = threading.Event()
-        def blocked_search(cancel):
-            started.set()
-            cancel.wait(2)
-            released.set()
-            return []
-        gallery.run_operation(blocked_search, lambda *_: (_ for _ in ()).throw(AssertionError("closed callback")))
-        assert started.wait(1)
-        gallery.force_close()
-        deadline = time.monotonic() + 2
-        while not released.is_set() and time.monotonic() < deadline:
-            while context.pending():
-                context.iteration(False)
-            time.sleep(0.01)
-        while context.pending():
-            context.iteration(False)
-        assert released.is_set()
-        assert gallery.closed
-        assert gallery.cancel_event.is_set()
-        assert dialog.gallery_dialog is None
+        key_state = {"value": "none"}
+        def save_fake_key(_value, _cancel):
+            key_state["value"] = "keyring"
+        def clear_fake_key(_cancel):
+            key_state["value"] = "none"
+        # Never use the user's real Secret Service in a smoke test.
+        with patch("simplepomodoro.gallery_dialog.credential_state", side_effect=lambda *_: key_state["value"]), \
+             patch("simplepomodoro.gallery_dialog.save_api_key", side_effect=save_fake_key), \
+             patch("simplepomodoro.gallery_dialog.clear_api_key", side_effect=clear_fake_key):
+            dialog.show_gallery()
+            gallery = dialog.gallery_dialog
+            context = GLib.MainContext.default()
+            def wait_until(condition):
+                deadline = time.monotonic() + 2
+                while not condition() and time.monotonic() < deadline:
+                    while context.pending():
+                        context.iteration(False)
+                    time.sleep(0.01)
+                assert condition()
+            wait_until(lambda: gallery.key_state == "none")
+            assert gallery.purpose() == "reminder"
+            gallery.query.set_text("bell & pip")
+            assert "q=bell+%26+pip" in gallery.browser_button.get_uri()
+            gallery.api_key_entry.set_text("testcredential123456")
+            gallery.save_key()
+            wait_until(lambda: gallery.key_state == "keyring")
+            assert gallery.api_key_entry.get_text() == "testcredential123456"
+            assert "Saved in desktop keyring" in gallery.credential_status.get_text()
+            gallery.clear_key()
+            wait_until(lambda: gallery.key_state == "none")
+            result = GallerySound("Test bell", "Example", "https://freesound.org/people/Example/sounds/123/",
+                                  "CC0", "https://creativecommons.org/publicdomain/zero/1.0/",
+                                  "https://cdn.freesound.org/previews/1/123_456-hq.ogg", None, 0.2, "audio/ogg", 123, 0.01)
+            gallery.gallery.search = Mock(return_value=[result])
+            gallery.query.set_text("bell")
+            gallery.search()
+            wait_until(lambda: gallery.selected() == result)
+            assert "Example" in gallery.details.get_text()
+            def fake_download(_result, folder, cancel):
+                path = folder / "test-download.ogg"
+                path.write_bytes(b"OggS")
+                path.with_name(path.name + ".json").write_text(json.dumps({"author": "Example"}))
+                return path
+            gallery.gallery.download = Mock(side_effect=fake_download)
+            gallery.preview()
+            wait_until(lambda: gallery.preview_path is not None)
+            preview_path = gallery.preview_path
+            preview_folder = preview_path.parent
+            assert preview_folder.parent == Path("/tmp")
+            assert preview_folder.stat().st_mode & 0o777 == 0o700
+            assert not list(window.sound_library.directory.iterdir())
+            assert window.audio.play_choice.call_args.args[0].path == preview_path
+            gallery.cancel()
+            assert not preview_folder.exists()
+            gallery.download()
+            wait_until(lambda: gallery.downloaded is not None)
+            downloaded = gallery.downloaded
+            assert downloaded.parent == window.sound_library.directory
+            assert any(choice.id == "file:test-download.ogg" for choice in dialog.choices)
+            # Close during an active preview writer: cleanup waits for that writer.
+            started = threading.Event()
+            released = threading.Event()
+            def blocked_download(_result, folder, cancel):
+                path = folder / "partial.ogg"
+                path.write_bytes(b"partial")
+                started.set()
+                cancel.wait(2)
+                released.set()
+                return path
+            gallery.gallery.download = Mock(side_effect=blocked_download)
+            gallery.preview()
+            assert started.wait(1)
+            pending_folder = gallery.preview_cache.directory
+            gallery.force_close()
+            wait_until(lambda: released.is_set() and not pending_folder.exists())
+            assert gallery.closed
+            assert gallery.cancel_event.is_set()
+            assert dialog.gallery_dialog is None
+            assert downloaded.exists()  # Only explicit Save sound persists.
         dialog.start_test()
         dialog.force_close()
         context = GLib.MainContext.default()
