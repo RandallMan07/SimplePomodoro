@@ -36,6 +36,7 @@ For the 0.1.1 feature batch and subsequent work using this workflow:
 
 - The coordinating agent divides requested functionality into logical, individually reviewable groups and delegates implementation to sub-agents.
 - Each group uses its own `hotfix-<functionality>` branch and isolated Git worktree. Agents must use their assigned worktree explicitly and must not switch the shared checkout's branch or edit another group's files.
+- Keep review worktrees in the persistent sibling directory `../SimplePomodoro-worktrees/hotfix-<functionality>`, not `/tmp`, so they survive temporary-directory cleanup and remain available for user acceptance.
 - Before implementation, each sub-agent submits a plan naming the files it will touch, implementation approach, dependencies, and validation. It waits for the coordinating agent's review and explicit plan approval before editing application code.
 - The coordinating agent reviews plans, resolves overlapping responsibilities, and writes the corresponding product and architecture decisions under `docs/` while implementation proceeds.
 - Sub-agents implement, run appropriate checks, commit their work, and report their branch, commit, behavior changes, checks, and limitations to the coordinator. They do not merge, tag, publish, or request user approval themselves.
