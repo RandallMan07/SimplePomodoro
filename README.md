@@ -55,7 +55,7 @@ Run from a terminal inside your graphical desktop session. The launcher uses Arc
 - **Start focus**, **Pause / Resume**, or **Reset**. Reset stops the session and returns to round one. Reset before editing a session already in progress.
 - **Heads-up** plays one advance chime per phase, seven seconds before the transition by default. Choose 0–60 seconds; 0 disables the advance alert. Phase changes use a distinct chime, and completion uses a third.
 - Adjust volume, mute tones, or use **Preview**. A visible warning still appears with tones muted. Desktop notifications accompany transitions if your notification service supports them.
-- Keep the window open or minimize it to receive sounds and notifications. When closing a running timer, choose **Save and close** to resume the countdown on reopening, **Keep open**, or **End session** to discard the countdown. Paused sessions save automatically and remain paused when reopened. **Reset** also discards the current countdown.
+- Keep the window open or minimize it to receive sounds and notifications. Closing automatically saves the countdown without a confirmation prompt. Running sessions account for elapsed time when reopened; paused sessions remain paused. Use **Reset** before closing to discard the current countdown. If saving fails, the window stays open and displays the error so you can retry.
 
 Session state lives in `$XDG_STATE_HOME/simplepomodoro/session.json` (normally `~/.local/state/simplepomodoro/`). A running session accounts for elapsed wall time while the app is closed, advances to the correct round/phase, and shows completion if the whole session elapsed. Historical sounds and notifications are not replayed; no alerts play while the application is closed. State saves at controls and transitions, on normal close, and every five seconds while running. Invalid state falls back to an idle timer with a visible message. A backward system-clock change counts as zero closed time; a forward change may advance or complete the session.
 
@@ -70,7 +70,7 @@ PYTHONPATH=src /usr/bin/python -m unittest discover -s tests -v
 PYTHONPATH=src /usr/bin/python tests/gtk_smoke.py
 ```
 
-The logic tests use a controlled clock, with no real-time sleeps or GTK requirement. The GTK smoke check needs a graphical session and isolates preferences, session state, and audio cache in a temporary directory; exit 77 means the display is unavailable. It tests widget construction, planning, controls, the advance warning, preferences, running/paused session restoration, and explicit session ending. Manually verify actual sound output, resizing, background operation, and notifications on your desktop.
+The logic tests use a controlled clock, with no real-time sleeps or GTK requirement. The GTK smoke check needs a graphical session and isolates preferences, session state, and audio cache in a temporary directory; exit 77 means the display is unavailable. It tests widget construction, planning, controls, the advance warning, preferences, automatic running/paused session restoration, close failures, and resetting a session before closing. Manually verify actual sound output, resizing, background operation, and notifications on your desktop.
 
 Application code is in `src/simplepomodoro/`; timer/planner logic is separated from GTK, and styling lives in `assets/style.css`. Use four-space Python indentation and descriptive snake_case names with explicit time units. Dependencies come from Arch's package manager; no Python dependency lockfile is needed for this system-library application.
 

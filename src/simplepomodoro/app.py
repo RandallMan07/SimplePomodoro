@@ -33,7 +33,6 @@ class Window(Adw.ApplicationWindow):
         self.settings_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "simplepomodoro/settings.json"
         self.settings = self.load_settings()
         self.initializing = True
-        self.close_approved = False
         self.session_store = SessionStore(Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "simplepomodoro/session.json")
         self.last_checkpoint_seconds = time.monotonic()
         self.timer = Timer()
@@ -375,28 +374,7 @@ class Window(Adw.ApplicationWindow):
             cr.stroke()
 
     def on_close(self, *_):
-        if self.timer.running and not self.close_approved:
-            dialog = Adw.AlertDialog(heading="Save your session?", body="Save and close to continue the countdown when you reopen. No sounds or notifications play while the app is closed. End session discards this countdown.")
-            dialog.add_response("cancel", "Keep open")
-            dialog.add_response("save", "Save and close")
-            dialog.add_response("end", "End session")
-            dialog.set_response_appearance("end", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("save")
-            dialog.set_close_response("cancel")
-            dialog.connect("response", self.close_response)
-            dialog.present(self)
-            return True
-        if not self.cleanup():
-            self.close_approved = False
-            return True
-        return False
-
-    def close_response(self, _dialog, response):
-        if response in ("save", "end"):
-            if response == "end":
-                self.reset_timer()
-            self.close_approved = True
-            self.close()
+        return not self.cleanup()
 
     def cleanup(self):
         # Persist before releasing inhibition and marking the in-memory timer

@@ -55,8 +55,10 @@ def main():
         restored.toggle_timer()
         restored.timer.clock = lambda: 20
         restored.tick()
-        # Save-and-close persists a running timer before cleanup stops it.
-        restored.close_response(None, "save")
+        # Closing directly saves a running timer without a confirmation dialog.
+        restored.close()
+        assert restored not in app.get_windows()
+        assert not restored.get_visible()
         with patch("simplepomodoro.app.Chimes.play") as play:
             running = Window(app)
             running.present()
@@ -69,8 +71,9 @@ def main():
             play.assert_not_called()
         with patch.object(running.session_store, "save", return_value=False):
             running.session_store.error = "Session could not be saved: test failure"
-            running.close_response(None, "save")
-            assert not running.close_approved
+            running.close()
+            assert running.get_visible()
+            assert running in app.get_windows()
             assert running.timer.running
             assert "could not be saved" in running.persistence_status.get_text()
         with patch.object(running.session_store, "save", wraps=running.session_store.save) as save:
@@ -99,7 +102,9 @@ def main():
         assert paused.timer.remaining == paused_seconds
         assert paused.start_button.get_label() == "Resume"
         paused.toggle_timer()
-        paused.close_response(None, "end")
+        paused.reset_timer()
+        paused.close()
+        assert paused not in app.get_windows()
         ended = Window(app)
         ended.present()
         assert not ended.timer.running
@@ -113,7 +118,7 @@ def main():
             assert ended in app.get_windows()
             assert "idle test failure" in ended.persistence_status.get_text()
         ended.close()
-        print("PASS: GTK construction, planner, start/pause/reset, warning, settings, running/paused session restoration, end session")
+        print("PASS: GTK construction, planner, start/pause/reset, warning, settings, automatic running/paused session restoration, close failures, reset persistence")
     return 0
 
 
