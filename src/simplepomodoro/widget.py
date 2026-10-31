@@ -59,6 +59,7 @@ class SummaryWidget(Gtk.Window):
         self.transition_generation = 0
         self.require_fresh_hover = False
         self.arrow_height = 0
+        self.arrow_layout_surface = None
         self.expanded = False
         self.disposed = False
         prepare_layer(self, owner, "simplepomodoro-arrow", 0)
@@ -105,7 +106,10 @@ class SummaryWidget(Gtk.Window):
     def on_arrow_realize(self, *_):
         # GtkWidget allocation can still be zero at map time. The surface layout
         # signal supplies the actual compositor-configured size in logical pixels.
-        self.get_surface().connect("layout", self.on_arrow_layout)
+        surface = self.get_surface()
+        if surface != self.arrow_layout_surface:
+            self.arrow_layout_surface = surface
+            surface.connect("layout", self.on_arrow_layout)
 
     def on_arrow_layout(self, surface, _width, height):
         if self.disposed or height <= 0:
@@ -115,7 +119,8 @@ class SummaryWidget(Gtk.Window):
             LayerShell.set_monitor(self.bar_window, monitor)
         self.arrow_height = height
         summary_top_margin = SUMMARY_GAP_PX if self.persistent_reminder else height + SUMMARY_GAP_PX
-        if not self.transitioning and LayerShell.get_margin(self.bar_window, LayerShell.Edge.TOP) != summary_top_margin:
+        can_reposition = not self.transitioning or self.bar_window.get_opacity() == 0
+        if can_reposition and LayerShell.get_margin(self.bar_window, LayerShell.Edge.TOP) != summary_top_margin:
             LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, summary_top_margin)
         # Only map after the arrow has real geometry, so the summary starts
         # below it with a small gap. Both surfaces stay fixed during hover fades.
@@ -175,7 +180,9 @@ class SummaryWidget(Gtk.Window):
         self.begin_mode_transition()
         self.set_arrow_input(False)
         self.set_focus_visible(False)
-        self.set_opacity(0)
+        # Top-level opacity is not a reliable hide for native layer surfaces.
+        # Unmap the arrow once per mode change; retain its configured height.
+        self.set_visible(False)
         generation = self.transition_generation
         self.fade_to(0.0, lambda: self.reposition_mode(generation))
 
@@ -200,14 +207,14 @@ class SummaryWidget(Gtk.Window):
         if self.disposed or generation != self.transition_generation:
             return
         # Resize/reanchor only while completely transparent, then wait for stable
-        # allocations before fading in. Neither layer surface is ever remapped.
+        # allocations before fading in. The summary itself is never remapped.
         self.minimize_button.set_visible(self.persistent_reminder)
         margin = SUMMARY_GAP_PX if self.persistent_reminder else self.arrow_height + SUMMARY_GAP_PX
         LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, margin)
         if not self.persistent_reminder:
             self.expanded = False
             self.arrow.set_icon_name("pan-down-symbolic")
-            self.set_opacity(1)
+            self.set_visible(True)
             self.set_arrow_input(True)
         self.settle_started_us = None
         self.settle_size = None

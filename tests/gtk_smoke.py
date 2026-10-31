@@ -82,7 +82,8 @@ def main():
             widget.key_pressed(None, Gdk.KEY_Return, 0, 0, "arrow")
             assert widget.persistent_reminder
             wait_until(lambda: not widget.transitioning and widget.bar_window.get_opacity() > 0.99)
-            assert widget.get_opacity() == 0
+            assert not widget.get_visible()
+            assert not widget.get_mapped()
             assert widget.bar_window.get_focus() == widget.pause_button
             assert widget.bar_window.get_focus_visible()
             assert widget.minimize_button.get_visible()
@@ -97,7 +98,8 @@ def main():
             assert not widget.persistent_reminder
             assert not widget.expanded
             assert not widget.minimize_button.get_visible()
-            assert widget.get_opacity() == 1
+            assert widget.get_visible()
+            assert widget.get_mapped()
             assert LayerShell.get_margin(widget.bar_window, LayerShell.Edge.TOP) == widget.arrow_height + SUMMARY_GAP_PX
             assert LayerShell.get_keyboard_mode(widget.bar_window) == LayerShell.KeyboardMode.NONE
             widget.pointer_leave()
