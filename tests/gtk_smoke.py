@@ -11,7 +11,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from simplepomodoro.app import Application, Window
 from simplepomodoro.core import Config
-from simplepomodoro.widget import LayerShell, widget_available
+from simplepomodoro.widget import LayerShell, SUMMARY_GAP_PX, widget_available
 
 
 def main():
@@ -28,6 +28,17 @@ def main():
             for _ in range(30):
                 if context.pending():
                     context.iteration(False)
+        def wait_until(predicate):
+            loop = GLib.MainLoop()
+            deadline_us = GLib.get_monotonic_time() + 1000000
+            def check():
+                if predicate() or GLib.get_monotonic_time() >= deadline_us:
+                    loop.quit()
+                    return GLib.SOURCE_REMOVE
+                return GLib.SOURCE_CONTINUE
+            GLib.timeout_add(10, check)
+            loop.run()
+            assert predicate()
         os.environ["XDG_CONFIG_HOME"] = directory
         os.environ["XDG_CACHE_HOME"] = directory
         app = Adw.Application(application_id="io.github.simplepomodoro.Smoke", flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -68,8 +79,30 @@ def main():
             assert not widget.expanded
             widget.pointer_enter()
             assert widget.expanded
-            widget.arrow.emit("clicked")  # Mouse click must never pin.
-            assert not hasattr(widget, "pinned")
+            widget.key_pressed(None, Gdk.KEY_Return, 0, 0, "arrow")
+            assert widget.persistent_reminder
+            wait_until(lambda: not widget.transitioning and widget.bar_window.get_opacity() > 0.99)
+            assert widget.get_opacity() == 0
+            assert widget.bar_window.get_focus() == widget.pause_button
+            assert widget.bar_window.get_focus_visible()
+            assert widget.minimize_button.get_visible()
+            assert LayerShell.get_margin(widget.bar_window, LayerShell.Edge.TOP) == SUMMARY_GAP_PX
+            assert LayerShell.get_keyboard_mode(widget) == LayerShell.KeyboardMode.NONE
+            widget.pointer_leave()
+            widget.focus_windows.clear()
+            widget.collapse()
+            assert widget.expanded  # The reminder survives leaving the cursor.
+            widget.minimize_button.emit("clicked")
+            wait_until(lambda: not widget.transitioning)
+            assert not widget.persistent_reminder
+            assert not widget.expanded
+            assert not widget.minimize_button.get_visible()
+            assert widget.get_opacity() == 1
+            assert LayerShell.get_margin(widget.bar_window, LayerShell.Edge.TOP) == widget.arrow_height + SUMMARY_GAP_PX
+            assert LayerShell.get_keyboard_mode(widget.bar_window) == LayerShell.KeyboardMode.NONE
+            widget.pointer_leave()
+            widget.pointer_enter()
+            assert widget.expanded
             widget.pause_button.emit("clicked")
             assert window.timer.running
             assert "Focus" in widget.state_label.get_text()
