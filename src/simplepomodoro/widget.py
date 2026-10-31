@@ -1,6 +1,7 @@
-"""A top-center Wayland layer surface sharing the main window's timer."""
+"""Fixed arrow and fading summary layer surfaces sharing the main timer."""
 from .layer_support import LAYER_LIBRARY
 import gi
+import cairo
 
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, GLib, Gtk
@@ -14,47 +15,59 @@ if LAYER_LIBRARY is not None:
     except (ImportError, ValueError):
         pass
 
+FADE_DURATION_SECONDS = 0.16
+LEAVE_GRACE_MS = 180
+
 
 def widget_available():
     return LayerShell is not None and LayerShell.is_supported()
 
 
+def prepare_layer(window, owner, namespace, top_margin):
+    window.set_decorated(False)
+    window.set_resizable(False)
+    window.set_default_size(1, 1)
+    window.add_css_class("pomodoro-widget")
+    LayerShell.init_for_window(window)
+    LayerShell.set_namespace(window, namespace)
+    LayerShell.set_layer(window, LayerShell.Layer.OVERLAY)
+    LayerShell.set_anchor(window, LayerShell.Edge.TOP, True)
+    LayerShell.set_margin(window, LayerShell.Edge.TOP, top_margin)
+    LayerShell.set_exclusive_zone(window, 0)
+    LayerShell.set_keyboard_mode(window, LayerShell.KeyboardMode.ON_DEMAND)
+    if hasattr(LayerShell, "set_respect_close"):
+        LayerShell.set_respect_close(window, True)
+    surface = owner.get_surface()
+    if surface is not None:
+        LayerShell.set_monitor(window, owner.get_display().get_monitor_at_surface(surface))
+
+
 class SummaryWidget(Gtk.Window):
     def __init__(self, owner):
-        super().__init__(application=owner.get_application(), title="SimplePomodoro summary")
+        super().__init__(application=owner.get_application(), title="SimplePomodoro arrow")
         self.owner = owner
-        self.pointer_inside = False
-        self.focus_inside = False
-        self.pinned = False
+        self.pointer_windows = set()
+        self.focus_windows = set()
         self.collapse_id = 0
-        self.set_decorated(False)
-        self.set_resizable(False)
-        self.set_default_size(1, 1)
-        self.add_css_class("pomodoro-widget")
-        LayerShell.init_for_window(self)
-        LayerShell.set_namespace(self, "simplepomodoro-summary")
-        LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
-        LayerShell.set_anchor(self, LayerShell.Edge.TOP, True)
-        LayerShell.set_margin(self, LayerShell.Edge.TOP, 6)
-        LayerShell.set_exclusive_zone(self, 0)
-        LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.ON_DEMAND)
-        if hasattr(LayerShell, "set_respect_close"):
-            LayerShell.set_respect_close(self, True)
-        surface = owner.get_surface()
-        if surface is not None:
-            LayerShell.set_monitor(self, owner.get_display().get_monitor_at_surface(surface))
+        self.fade_id = 0
+        self.expanded = False
+        self.disposed = False
+        prepare_layer(self, owner, "simplepomodoro-arrow", 0)
         self.connect("close-request", self.on_close)
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.set_child(root)
-        self.arrow = Gtk.Button(icon_name="pan-down-symbolic", halign=Gtk.Align.CENTER)
+        self.arrow = Gtk.Button(icon_name="pan-down-symbolic")
         self.arrow.add_css_class("summary-arrow")
-        self.arrow.set_tooltip_text("SimplePomodoro · hover or click to show the timer")
-        self.arrow.connect("clicked", self.toggle_pinned)
-        root.append(self.arrow)
-        self.bar = Gtk.Box(spacing=12, margin_top=4)
+        self.arrow.set_tooltip_text("SimplePomodoro · hover to show the timer")
+        self.set_child(self.arrow)
+        self.bar_window = Gtk.Window(application=owner.get_application(), title="SimplePomodoro summary")
+        arrow_height = self.arrow.measure(Gtk.Orientation.VERTICAL, -1)[1]
+        prepare_layer(self.bar_window, owner, "simplepomodoro-summary", arrow_height)
+        self.bar_window.set_opacity(0)
+        LayerShell.set_keyboard_mode(self.bar_window, LayerShell.KeyboardMode.NONE)
+        self.bar_window.connect("realize", lambda *_: self.set_bar_input(False))
+        self.bar_window.connect("close-request", self.on_close)
+        self.bar = Gtk.Box(spacing=12)
         self.bar.add_css_class("summary-bar")
-        self.bar.set_visible(False)
-        root.append(self.bar)
+        self.bar_window.set_child(self.bar)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         self.state_label = Gtk.Label(xalign=0)
         self.state_label.add_css_class("summary-state")
@@ -70,76 +83,113 @@ class SummaryWidget(Gtk.Window):
         self.open_button.set_tooltip_text("Open full timer")
         self.open_button.connect("clicked", lambda *_: owner.restore_main())
         self.bar.append(self.open_button)
-        motion = Gtk.EventControllerMotion()
-        motion.connect("enter", self.pointer_enter)
-        motion.connect("leave", self.pointer_leave)
-        root.add_controller(motion)
-        focus = Gtk.EventControllerFocus()
-        focus.connect("enter", self.focus_enter)
-        focus.connect("leave", self.focus_leave)
-        root.add_controller(focus)
-        self.connect("notify::focus-visible", self.focus_visibility_changed)
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self.key_pressed)
-        root.add_controller(keys)
+        self.add_controllers(self, self.arrow, "arrow")
+        self.add_controllers(self.bar_window, self.bar, "bar")
+        self.connect("map", self.on_map)
         self.update()
 
-    def set_expanded(self, expanded):
-        self.bar.set_visible(expanded)
-        self.arrow.set_icon_name("pan-up-symbolic" if expanded else "pan-down-symbolic")
-        self.set_default_size(1, 1)
+    def on_map(self, *_):
+        # The surfaces never change size on hover. A transparent mapped bar avoids
+        # compositor remap/resize animations; its input region is empty at rest.
+        LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, self.get_height())
+        self.bar_window.set_visible(True)
+        self.set_bar_input(False)
 
-    def toggle_pinned(self, *_):
-        self.pinned = not self.pinned
-        self.set_expanded(self.pinned or self.pointer_inside or self.focus_inside)
+    def add_controllers(self, window, root, name):
+        motion = Gtk.EventControllerMotion()
+        motion.connect("enter", lambda *_: self.pointer_enter(name))
+        motion.connect("leave", lambda *_: self.pointer_leave(name))
+        root.add_controller(motion)
+        focus = Gtk.EventControllerFocus()
+        focus.connect("enter", lambda *_: self.focus_changed(window, name))
+        focus.connect("leave", lambda *_: self.focus_leave(name))
+        root.add_controller(focus)
+        window.connect("notify::focus-visible", lambda *_: self.focus_changed(window, name))
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self.key_pressed, name)
+        root.add_controller(keys)
+
+    def set_bar_input(self, enabled):
+        surface = self.bar_window.get_surface()
+        if surface is not None:
+            surface.set_input_region(None if enabled else cairo.Region())
+        LayerShell.set_keyboard_mode(self.bar_window, LayerShell.KeyboardMode.ON_DEMAND if enabled else LayerShell.KeyboardMode.NONE)
+
+    def set_expanded(self, expanded):
+        if self.disposed or expanded == self.expanded:
+            return
+        self.expanded = expanded
+        self.arrow.set_icon_name("pan-up-symbolic" if expanded else "pan-down-symbolic")
+        if expanded:
+            self.set_bar_input(True)
+        else:
+            # Do not trap the cursor behind a fading, inactive rectangle.
+            self.set_bar_input(False)
+        if self.fade_id:
+            self.bar_window.remove_tick_callback(self.fade_id)
+        self.fade_start_opacity = self.bar_window.get_opacity()
+        self.fade_target_opacity = 1.0 if expanded else 0.0
+        self.fade_started_us = None
+        self.fade_id = self.bar_window.add_tick_callback(self.fade_frame)
+
+    def fade_frame(self, _widget, clock):
+        now_us = clock.get_frame_time()
+        if self.fade_started_us is None:
+            self.fade_started_us = now_us
+        fraction = min(1.0, (now_us - self.fade_started_us) / (FADE_DURATION_SECONDS * 1000000))
+        eased = fraction * fraction * (3 - 2 * fraction)
+        self.bar_window.set_opacity(self.fade_start_opacity + (self.fade_target_opacity - self.fade_start_opacity) * eased)
+        if fraction >= 1:
+            self.fade_id = 0
+            return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_CONTINUE
 
     def cancel_collapse(self):
         if self.collapse_id:
             GLib.source_remove(self.collapse_id)
             self.collapse_id = 0
 
-    def pointer_enter(self, *_):
-        self.pointer_inside = True
+    def pointer_enter(self, name="arrow"):
+        self.pointer_windows.add(name)
         self.cancel_collapse()
         self.set_expanded(True)
 
-    def pointer_leave(self, *_):
-        self.pointer_inside = False
+    def pointer_leave(self, name="arrow"):
+        self.pointer_windows.discard(name)
         self.schedule_collapse()
 
-    def focus_enter(self, *_):
-        # GTK assigns an initial focus widget while mapping. Expand for keyboard
-        # navigation, not that automatic assignment. Pointer/click have own paths.
-        self.focus_inside = self.get_focus_visible()
-        if self.focus_inside:
-            self.cancel_collapse()
-            self.set_expanded(True)
-
-    def focus_visibility_changed(self, *_):
-        self.focus_inside = self.get_focus_visible() and self.get_focus() is not None
-        if self.focus_inside:
+    def focus_changed(self, window, name):
+        # Mouse-assigned focus cannot hold the bar open after leaving it.
+        if window.get_focus_visible() and window.get_focus() is not None:
+            self.focus_windows.add(name)
             self.cancel_collapse()
             self.set_expanded(True)
         else:
-            self.schedule_collapse()
+            self.focus_leave(name)
 
-    def focus_leave(self, *_):
-        self.focus_inside = False
+    def focus_leave(self, name):
+        self.focus_windows.discard(name)
         self.schedule_collapse()
 
     def schedule_collapse(self):
         self.cancel_collapse()
-        self.collapse_id = GLib.timeout_add(250, self.collapse)
+        self.collapse_id = GLib.timeout_add(LEAVE_GRACE_MS, self.collapse)
 
     def collapse(self):
         self.collapse_id = 0
-        if not (self.pointer_inside or self.focus_inside or self.pinned):
+        if not (self.pointer_windows or self.focus_windows):
             self.set_expanded(False)
         return GLib.SOURCE_REMOVE
 
-    def key_pressed(self, _controller, keyval, *_):
+    def key_pressed(self, _controller, keyval, _keycode, _state, name):
         if keyval == Gdk.KEY_Escape:
             self.owner.restore_main()
+            return True
+        if name == "arrow" and keyval in (Gdk.KEY_Down, Gdk.KEY_Tab, Gdk.KEY_Return, Gdk.KEY_space):
+            self.set_expanded(True)
+            self.bar_window.present()
+            self.bar_window.set_focus_visible(True)
+            self.pause_button.grab_focus()
             return True
         return False
 
@@ -148,15 +198,21 @@ class SummaryWidget(Gtk.Window):
         self.state_label.set_text(f"{summary.phase} · {summary.clock}")
         self.detail_label.set_text(summary.detail)
         self.pause_button.set_label(summary.action)
-        self.remove_css_class("rest")
-        if not self.owner.timer.is_work:
-            self.add_css_class("rest")
-        self.arrow.set_tooltip_text(f"{summary.phase} · {summary.clock} · {summary.detail}\nHover or click to show the timer")
+        for window in (self, self.bar_window):
+            window.remove_css_class("rest")
+            if not self.owner.timer.is_work:
+                window.add_css_class("rest")
+        self.arrow.set_tooltip_text(f"{summary.phase} · {summary.clock} · {summary.detail}\nHover to show the timer")
 
     def on_close(self, *_):
         self.owner.restore_main()
         return True
 
     def dispose_widget(self):
+        self.disposed = True
         self.cancel_collapse()
+        if self.fade_id:
+            self.bar_window.remove_tick_callback(self.fade_id)
+            self.fade_id = 0
+        self.bar_window.destroy()
         self.destroy()

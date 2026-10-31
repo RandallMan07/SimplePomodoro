@@ -19,7 +19,15 @@ def main():
     if Gdk.Display.get_default() is None:
         print("SKIP: no accessible graphical display")
         return 77
-    with tempfile.TemporaryDirectory(prefix="simplepomodoro-smoke-") as directory:
+    with (tempfile.TemporaryDirectory(prefix="simplepomodoro-smoke-") as directory,
+          patch("simplepomodoro.app.open_floating"),
+          patch("simplepomodoro.app.capture_for_widget", lambda callback: callback(None)),
+          patch("simplepomodoro.app.restore_after_widget")):
+        def pump():
+            context = GLib.MainContext.default()
+            for _ in range(30):
+                if context.pending():
+                    context.iteration(False)
         os.environ["XDG_CONFIG_HOME"] = directory
         os.environ["XDG_CACHE_HOME"] = directory
         app = Adw.Application(application_id="io.github.simplepomodoro.Smoke", flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -49,39 +57,48 @@ def main():
         if widget_available():
             window.present()
             assert window.show_widget()
+            pump()
             widget = window.summary_widget
-            context = GLib.MainContext.default()
-            for _ in range(20):
-                if context.pending():
-                    context.iteration(False)
             assert LayerShell.is_layer_window(widget)
             assert LayerShell.get_layer(widget) == LayerShell.Layer.OVERLAY
             assert LayerShell.get_anchor(widget, LayerShell.Edge.TOP)
             assert LayerShell.get_exclusive_zone(widget) == 0
             assert not window.get_visible()
-            assert not widget.bar.get_visible()
+            assert not widget.expanded
             widget.pointer_enter()
-            assert widget.bar.get_visible()
+            assert widget.expanded
+            widget.arrow.emit("clicked")  # Mouse click must never pin.
+            assert not hasattr(widget, "pinned")
             widget.pause_button.emit("clicked")
             assert window.timer.running
             assert "Focus" in widget.state_label.get_text()
             widget.pause_button.emit("clicked")
             assert not window.timer.running
             widget.pointer_leave()
-            widget.focus_inside = False
+            widget.focus_windows.clear()
             widget.cancel_collapse()
             widget.collapse()
-            assert not widget.bar.get_visible()
+            assert not widget.expanded
             widget.open_button.emit("clicked")
             assert window.summary_widget is None
             assert window.get_visible()
             assert window.show_widget()
+            pump()
             assert window.summary_widget is not widget
             Application.do_activate(app)
             assert window.summary_widget is None
             assert window.get_visible()
             assert len([item for item in app.get_windows() if isinstance(item, Window)]) == 1
             window.reset_timer()
+            # New activation invalidates an in-flight capture, preventing a late hide.
+            callbacks = []
+            with patch("simplepomodoro.app.capture_for_widget", callbacks.append):
+                window.show_widget()
+                Application.do_activate(app)
+                callbacks[0](None)
+                pump()
+                assert window.summary_widget is None
+                assert window.get_visible()
         else:
             assert not window.compact_button.get_sensitive()
         window.warning.set_value(12)
@@ -93,6 +110,7 @@ def main():
         if widget_available():
             restored.present()
             restored.show_widget()
+            pump()
         restored.close()
         assert restored.summary_widget is None
         print("PASS: GTK construction, planner, start/pause/reset, warning, settings, summary widget")

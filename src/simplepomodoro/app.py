@@ -13,7 +13,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 import cairo
 from .audio import Chimes
 from .core import Config, Timer, propose
-from .desktop import open_floating
+from .desktop import capture_for_widget, open_floating, restore_after_widget
 from .widget import SummaryWidget, widget_available
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +31,10 @@ class Window(Adw.ApplicationWindow):
         super().__init__(application=application, title="SimplePomodoro")
         self.set_icon_name("io.github.simplepomodoro.App")
         self.summary_widget = None
+        self.widget_cycle = 0
+        self.widget_capture_pending = False
+        self.saved_window_state = None
+        self.closed = False
         self.settings_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "simplepomodoro/settings.json"
         self.settings = self.load_settings()
         self.timer = Timer()
@@ -179,19 +183,40 @@ class Window(Adw.ApplicationWindow):
         if not widget_available():
             self.status.set_text("The top-center widget needs gtk4-layer-shell and a compatible Wayland desktop.")
             return False
-        if self.summary_widget is None:
-            self.summary_widget = SummaryWidget(self)
-        self.summary_widget.present()
-        self.set_visible(False)
+        if self.summary_widget is not None or self.widget_capture_pending:
+            return True
+        self.widget_cycle += 1
+        cycle = self.widget_cycle
+        self.widget_capture_pending = True
+
+        def captured(state):
+            def apply():
+                if self.closed or cycle != self.widget_cycle:
+                    return GLib.SOURCE_REMOVE
+                self.widget_capture_pending = False
+                self.saved_window_state = state
+                self.summary_widget = SummaryWidget(self)
+                self.summary_widget.present()
+                self.set_visible(False)
+                return GLib.SOURCE_REMOVE
+            GLib.idle_add(apply)
+
+        capture_for_widget(captured)
         return True
 
     def restore_main(self):
+        self.widget_cycle += 1
+        self.widget_capture_pending = False
         widget = self.summary_widget
         self.summary_widget = None
+        state = self.saved_window_state
+        self.saved_window_state = None
         if widget is not None:
             widget.dispose_widget()
         self.unminimize()
         self.present()
+        if widget is not None:
+            restore_after_widget(state, *self.opening_size)
 
     def minimize_timer(self, *_):
         if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
@@ -396,6 +421,9 @@ class Window(Adw.ApplicationWindow):
             self.close()
 
     def cleanup(self):
+        self.closed = True
+        self.widget_cycle += 1
+        self.widget_capture_pending = False
         if self.summary_widget is not None:
             self.summary_widget.dispose_widget()
             self.summary_widget = None
