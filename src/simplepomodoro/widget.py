@@ -59,11 +59,10 @@ class SummaryWidget(Gtk.Window):
         self.arrow.set_tooltip_text("SimplePomodoro · hover to show the timer")
         self.set_child(self.arrow)
         self.bar_window = Gtk.Window(application=owner.get_application(), title="SimplePomodoro summary")
-        arrow_height = self.arrow.measure(Gtk.Orientation.VERTICAL, -1)[1]
-        prepare_layer(self.bar_window, owner, "simplepomodoro-summary", arrow_height)
+        prepare_layer(self.bar_window, owner, "simplepomodoro-summary", 0)
         self.bar_window.set_opacity(0)
         LayerShell.set_keyboard_mode(self.bar_window, LayerShell.KeyboardMode.NONE)
-        self.bar_window.connect("realize", lambda *_: self.set_bar_input(False))
+        self.bar_window.connect("realize", lambda *_: self.set_bar_input(self.expanded))
         self.bar_window.connect("close-request", self.on_close)
         self.bar = Gtk.Box(spacing=12)
         self.bar.add_css_class("summary-bar")
@@ -85,15 +84,27 @@ class SummaryWidget(Gtk.Window):
         self.bar.append(self.open_button)
         self.add_controllers(self, self.arrow, "arrow")
         self.add_controllers(self.bar_window, self.bar, "bar")
-        self.connect("map", self.on_map)
+        self.connect("realize", self.on_arrow_realize)
         self.update()
 
-    def on_map(self, *_):
-        # The surfaces never change size on hover. A transparent mapped bar avoids
-        # compositor remap/resize animations; its input region is empty at rest.
-        LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, self.get_height())
-        self.bar_window.set_visible(True)
-        self.set_bar_input(False)
+    def on_arrow_realize(self, *_):
+        # GtkWidget allocation can still be zero at map time. The surface layout
+        # signal supplies the actual compositor-configured size in logical pixels.
+        self.get_surface().connect("layout", self.on_arrow_layout)
+
+    def on_arrow_layout(self, surface, _width, height):
+        if self.disposed or height <= 0:
+            return
+        monitor = self.get_display().get_monitor_at_surface(surface)
+        if monitor is not None and LayerShell.get_monitor(self.bar_window) != monitor:
+            LayerShell.set_monitor(self.bar_window, monitor)
+        if LayerShell.get_margin(self.bar_window, LayerShell.Edge.TOP) != height:
+            LayerShell.set_margin(self.bar_window, LayerShell.Edge.TOP, height)
+        # Only map after the arrow has real geometry, so the summary starts
+        # directly below it. Both surfaces remain fixed throughout hover fades.
+        if not self.bar_window.get_visible():
+            self.bar_window.set_visible(True)
+            self.set_bar_input(self.expanded)
 
     def add_controllers(self, window, root, name):
         motion = Gtk.EventControllerMotion()

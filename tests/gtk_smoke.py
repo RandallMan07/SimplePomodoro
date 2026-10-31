@@ -34,6 +34,7 @@ def main():
         app.register(None)
         window = Window(app)
         assert window.timer.config == Config()
+        assert not hasattr(window, "minimize_button")
         window.budget.set_value(60)
         window.plan()
         assert window.timer.config == Config(50, 10, 1)

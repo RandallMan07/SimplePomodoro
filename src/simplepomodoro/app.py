@@ -50,19 +50,11 @@ class Window(Adw.ApplicationWindow):
         self.compact_button = Gtk.Button(icon_name="pan-up-symbolic")
         self.compact_button.set_tooltip_text("Show the top-center timer widget")
         self.compact_button.connect("clicked", self.show_widget)
-        self.minimize_button = Gtk.Button(icon_name="window-minimize-symbolic")
-        self.minimize_button.connect("clicked", self.minimize_timer)
         supported = widget_available()
         self.compact_button.set_sensitive(supported)
         if not supported:
             self.compact_button.set_tooltip_text("Widget requires gtk4-layer-shell and a Wayland compositor supporting layer shell")
-        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-            self.minimize_button.set_sensitive(supported)
-            self.minimize_button.set_tooltip_text("Hide to the timer arrow (Hyprland has no native minimize); hover and select Open full timer to restore")
-        else:
-            self.minimize_button.set_tooltip_text("Minimize timer (desktop support varies)")
         header.pack_end(self.compact_button)
-        header.pack_end(self.minimize_button)
         outer.append(header)
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, propagate_natural_height=True)
         outer.append(scroll)
@@ -217,12 +209,6 @@ class Window(Adw.ApplicationWindow):
         self.present()
         if widget is not None:
             restore_after_widget(state, *self.opening_size)
-
-    def minimize_timer(self, *_):
-        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-            self.show_widget()
-        else:
-            self.minimize()
 
     def on_first_map(self, *_):
         if not self.opening_applied:
