@@ -25,6 +25,7 @@ def main():
         os.environ["XDG_CONFIG_HOME"] = directory
         os.environ["XDG_CACHE_HOME"] = directory
         os.environ["XDG_DATA_HOME"] = directory
+        os.environ["XDG_STATE_HOME"] = directory
         app = Adw.Application(application_id="io.github.simplepomodoro.Smoke", flags=Gio.ApplicationFlags.NON_UNIQUE)
         app.register(None)
         theme_file = Path(directory, "omarchy/current/theme/colors.toml")
@@ -168,9 +169,77 @@ def main():
         assert restored.warning.get_value_as_int() == 12
         assert restored.sound_selections["phase"] == "builtin:bell"
         assert restored.countdown_enabled
+        restored.work.set_value(2)
+        restored.rest.set_value(1)
+        restored.repetitions.set_value(3)
+        restored.timer.clock = lambda: 0
+        restored.toggle_timer()
+        restored.timer.clock = lambda: 20
+        restored.tick()
+        # Closing directly saves a running timer without a confirmation dialog.
         restored.close()
         assert restored not in app.get_windows()
-        print("PASS: GTK construction, planner, controls, sounds, gallery, theme reload, cancellation and persistence")
+        assert not restored.get_visible()
+        with patch("simplepomodoro.app.Chimes.play") as play:
+            running = Window(app)
+            running.present()
+            assert running.timer.running
+            assert running.timer.config == Config(2, 1, 3)
+            assert running.work.get_value_as_int() == 2
+            assert running.repetitions.get_value_as_int() == 3
+            assert 99 <= running.timer.remaining <= 100
+            assert not running.session_card.get_sensitive()
+            play.assert_not_called()
+        with patch.object(running.session_store, "save", return_value=False):
+            running.session_store.error = "Session could not be saved: test failure"
+            running.close()
+            assert running.get_visible()
+            assert running in app.get_windows()
+            assert running.timer.running
+            assert "could not be saved" in running.persistence_status.get_text()
+        with patch.object(running.session_store, "save", wraps=running.session_store.save) as save:
+            checkpoint_seconds = running.last_checkpoint_seconds
+            with patch("simplepomodoro.app.time.monotonic", return_value=checkpoint_seconds + 1):
+                running.tick()
+                save.assert_not_called()
+            with patch("simplepomodoro.app.time.monotonic", return_value=checkpoint_seconds + 6):
+                running.tick()
+                save.assert_called_once()
+        running.toggle_timer()
+        paused_seconds = running.timer.remaining
+        with patch.object(running.session_store, "save", return_value=False):
+            running.session_store.error = "Session could not be saved: paused test failure"
+            running.close()
+            assert running.get_visible()
+            assert running in app.get_windows()
+            assert not running.timer.running
+            assert running.timer.remaining == paused_seconds
+            assert "paused test failure" in running.persistence_status.get_text()
+        # Retrying the close must save the paused state before any teardown.
+        running.close()
+        paused = Window(app)
+        paused.present()
+        assert not paused.timer.running
+        assert paused.timer.remaining == paused_seconds
+        assert paused.start_button.get_label() == "Resume"
+        paused.toggle_timer()
+        paused.reset_timer()
+        paused.close()
+        assert paused not in app.get_windows()
+        ended = Window(app)
+        ended.present()
+        assert not ended.timer.running
+        assert ended.timer.index == 0
+        assert ended.timer.remaining == 120
+        assert ended.session_card.get_sensitive()
+        with patch.object(ended.session_store, "save", return_value=False):
+            ended.session_store.error = "Session could not be saved: idle test failure"
+            ended.close()
+            assert ended.get_visible()
+            assert ended in app.get_windows()
+            assert "idle test failure" in ended.persistence_status.get_text()
+        ended.close()
+        print("PASS: GTK construction, planner, sounds, gallery, theme reload, automatic session restoration and persistence failures")
     return 0
 
 
