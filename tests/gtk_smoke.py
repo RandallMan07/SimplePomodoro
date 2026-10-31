@@ -27,9 +27,21 @@ def main():
         os.environ["XDG_DATA_HOME"] = directory
         app = Adw.Application(application_id="io.github.simplepomodoro.Smoke", flags=Gio.ApplicationFlags.NON_UNIQUE)
         app.register(None)
+        theme_file = Path(directory, "omarchy/current/theme/colors.toml")
+        theme_file.parent.mkdir(parents=True)
+        theme_file.write_text('accent = "#123456"\nbackground = "#ffffff"\nmode = "light"\n')
         window = Window(app)
         window.present()
         window.audio.play_choice = Mock()
+        assert window.palette.focus == "#123456"
+        assert Adw.StyleManager.get_default().get_color_scheme() == Adw.ColorScheme.FORCE_LIGHT
+        errors = []
+        window.theme_provider.connect("parsing-error", lambda _provider, _section, error: errors.append(str(error)))
+        theme_file.write_text('accent = "#abcdef"\nmode = "dark"\n')
+        window.reload_theme()
+        assert window.palette.focus == "#abcdef"
+        assert Adw.StyleManager.get_default().get_color_scheme() == Adw.ColorScheme.FORCE_DARK
+        assert not errors, errors
         assert window.timer.config == Config()
         window.budget.set_value(60)
         window.plan()
@@ -158,7 +170,7 @@ def main():
         assert restored.countdown_enabled
         restored.close()
         assert restored not in app.get_windows()
-        print("PASS: GTK construction, planner, controls, sounds, gallery search/download/preview, cancellation and persistence")
+        print("PASS: GTK construction, planner, controls, sounds, gallery, theme reload, cancellation and persistence")
     return 0
 
 

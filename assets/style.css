@@ -1,19 +1,19 @@
-window { background: #101317; color: #edf1f1; }
+window { background: @sp_background; color: @sp_foreground; }
 headerbar { background: transparent; box-shadow: none; }
 .main { padding: 12px 28px 26px; }
-.eyebrow { color: #91b7ad; font-size: 11px; font-weight: 700; letter-spacing: 3px; }
+.eyebrow { color: @sp_focus; font-size: 11px; font-weight: 700; letter-spacing: 3px; }
 .hero { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
-.muted { color: #8e9b9e; }
-.card { background: #1b2127; border: 1px solid #2a343b; border-radius: 20px; padding: 18px; }
+.muted { color: @sp_muted; }
+.card { background: @sp_surface; border: 1px solid @sp_border; border-radius: 20px; padding: 18px; }
 .time { font-size: 62px; font-weight: 300; font-feature-settings: "tnum"; letter-spacing: -3px; }
-.phase { color: #9ae6cb; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
-.rest .phase { color: #b6b6f4; }
-.warning .phase { color: #f6c77b; }
-button.primary { background: #a2e6cf; color: #10251f; border-radius: 14px; padding: 12px 28px; font-weight: 700; }
-button.secondary { background: #252e36; border-radius: 14px; padding: 12px 18px; }
+.phase { color: @sp_focus; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+.rest .phase { color: @sp_rest; }
+.warning .phase { color: @sp_warning; }
+button.primary { background: @sp_focus; color: @sp_primary_text; border-radius: 14px; padding: 12px 28px; font-weight: 700; }
+button.secondary { background: @sp_control; border-radius: 14px; padding: 12px 18px; }
 .section-title { font-weight: 700; font-size: 15px; }
-spinbutton { border-radius: 10px; background: #10171d; }
-.hint { color: #9aa8ad; font-size: 12px; }
-.error { color: #f6c77b; }
-progressbar trough { min-height: 4px; background: #2a343b; border-radius: 3px; }
-progressbar progress { min-height: 4px; background: #a2e6cf; border-radius: 3px; }
+spinbutton { border-radius: 10px; background: @sp_input; }
+.hint { color: @sp_muted; font-size: 12px; }
+.error { color: @sp_warning; }
+progressbar trough { min-height: 4px; background: @sp_border; border-radius: 3px; }
+progressbar progress { min-height: 4px; background: @sp_focus; border-radius: 3px; }

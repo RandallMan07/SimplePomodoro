@@ -15,6 +15,7 @@ from .core import Config, Timer, propose
 from .desktop import open_floating
 from .sounds import CountdownCues, SoundLibrary
 from .sound_settings import SoundSettings
+from .theme import ThemeSource, rgb
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,6 +31,12 @@ class Window(Adw.ApplicationWindow):
     def __init__(self, application):
         super().__init__(application=application, title="SimplePomodoro")
         self.set_icon_name("io.github.simplepomodoro.App")
+        self.theme_source = ThemeSource()
+        self.theme_provider = Gtk.CssProvider()
+        self.theme_css = (ROOT / "assets/style.css").read_text()
+        Gtk.StyleContext.add_provider_for_display(self.get_display(), self.theme_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.reload_theme(force=True)
+        self.theme_timeout_id = GLib.timeout_add_seconds(2, self.reload_theme)
         self.settings_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "simplepomodoro/settings.json"
         self.settings = self.load_settings()
         self.timer = Timer()
@@ -164,6 +171,15 @@ class Window(Adw.ApplicationWindow):
         self.connect("map", self.on_first_map)
         self.opening_applied = False
         self.timeout_id = GLib.timeout_add(100, self.tick)
+
+    def reload_theme(self, force=False):
+        if self.theme_source.reload(force=force):
+            self.palette = self.theme_source.palette
+            self.theme_provider.load_from_data((self.palette.definitions() + self.theme_css).encode())
+            Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_LIGHT if self.palette.light else Adw.ColorScheme.FORCE_DARK)
+            if hasattr(self, "ring"):
+                self.ring.queue_draw()
+        return GLib.SOURCE_CONTINUE
 
     def on_first_map(self, *_):
         if not self.opening_applied:
@@ -360,17 +376,17 @@ class Window(Adw.ApplicationWindow):
         for i in range(60):
             angle = i * math.tau / 60 - math.pi / 2
             length = 7 if i % 5 == 0 else 3
-            cr.set_source_rgba(0.5, 0.65, 0.65, 0.35)
+            cr.set_source_rgba(*rgb(self.palette.muted), 0.35)
             cr.move_to(x + (radius + 15) * math.cos(angle), y + (radius + 15) * math.sin(angle))
             cr.line_to(x + (radius + 15 + length) * math.cos(angle), y + (radius + 15 + length) * math.sin(angle))
             cr.stroke()
         cr.set_line_width(9)
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_source_rgb(0.16, 0.20, 0.23)
+        cr.set_source_rgb(*rgb(self.palette.border))
         cr.arc(x, y, radius, 0, math.tau)
         cr.stroke()
         if self.timer.progress > 0:
-            cr.set_source_rgb(*( (0.64, 0.90, 0.81) if self.timer.is_work else (0.71, 0.71, 0.96)))
+            cr.set_source_rgb(*rgb(self.palette.focus if self.timer.is_work else self.palette.rest))
             cr.arc(x, y, radius, -math.pi / 2, -math.pi / 2 + math.tau * self.timer.progress)
             cr.stroke()
 
@@ -401,6 +417,8 @@ class Window(Adw.ApplicationWindow):
             self.sound_dialog.cancel_gallery()
             self.sound_dialog.close()
         GLib.source_remove(self.timeout_id)
+        GLib.source_remove(self.theme_timeout_id)
+        Gtk.StyleContext.remove_provider_for_display(self.get_display(), self.theme_provider)
         self.save_settings()
 
 
@@ -411,11 +429,7 @@ class Application(Adw.Application):
     def do_activate(self):
         window = self.get_active_window()
         if window is None:
-            Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
             Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(str(ROOT / "assets"))
-            provider = Gtk.CssProvider()
-            provider.load_from_path(str(ROOT / "assets/style.css"))
-            Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             window = Window(self)
         window.present()
 
