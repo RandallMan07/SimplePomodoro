@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from . import layer_support  # Must load before importing GTK/Wayland.
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -13,11 +14,12 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 import cairo
 from .audio import Chimes
 from .core import Config, Timer, propose
-from .desktop import open_floating
+from .desktop import capture_for_widget, open_floating, restore_after_widget
 from .sounds import CountdownCues, SoundLibrary
 from .sound_settings import SoundSettings
 from .theme import ThemeSource, rgb
 from .session import SessionStore
+from .widget import SummaryWidget, widget_available
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,6 +41,11 @@ class Window(Adw.ApplicationWindow):
         Gtk.StyleContext.add_provider_for_display(self.get_display(), self.theme_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.reload_theme(force=True)
         self.theme_timeout_id = GLib.timeout_add_seconds(2, self.reload_theme)
+        self.summary_widget = None
+        self.widget_cycle = 0
+        self.widget_capture_pending = False
+        self.saved_window_state = None
+        self.closed = False
         self.settings_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "simplepomodoro/settings.json"
         self.settings = self.load_settings()
         self.initializing = True
@@ -58,6 +65,15 @@ class Window(Adw.ApplicationWindow):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Adw.HeaderBar()
         header.set_title_widget(Gtk.Box())
+        header.set_decoration_layout(":close")
+        self.compact_button = Gtk.Button(icon_name="pan-up-symbolic")
+        self.compact_button.set_tooltip_text("Show the top-center timer widget")
+        self.compact_button.connect("clicked", self.show_widget)
+        supported = widget_available()
+        self.compact_button.set_sensitive(supported)
+        if not supported:
+            self.compact_button.set_tooltip_text("Widget requires gtk4-layer-shell and a Wayland compositor supporting layer shell")
+        header.pack_end(self.compact_button)
         outer.append(header)
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, propagate_natural_height=True)
         outer.append(scroll)
@@ -202,6 +218,45 @@ class Window(Adw.ApplicationWindow):
             if hasattr(self, "ring"):
                 self.ring.queue_draw()
         return GLib.SOURCE_CONTINUE
+
+    def show_widget(self, *_):
+        if not widget_available():
+            self.status.set_text("The top-center widget needs gtk4-layer-shell and a compatible Wayland desktop.")
+            return False
+        if self.summary_widget is not None or self.widget_capture_pending:
+            return True
+        self.widget_cycle += 1
+        cycle = self.widget_cycle
+        self.widget_capture_pending = True
+
+        def captured(state):
+            def apply():
+                if self.closed or cycle != self.widget_cycle:
+                    return GLib.SOURCE_REMOVE
+                self.widget_capture_pending = False
+                self.saved_window_state = state
+                self.summary_widget = SummaryWidget(self)
+                self.summary_widget.present()
+                self.set_visible(False)
+                return GLib.SOURCE_REMOVE
+            GLib.idle_add(apply)
+
+        capture_for_widget(captured)
+        return True
+
+    def restore_main(self):
+        self.widget_cycle += 1
+        self.widget_capture_pending = False
+        widget = self.summary_widget
+        self.summary_widget = None
+        state = self.saved_window_state
+        self.saved_window_state = None
+        if widget is not None:
+            widget.dispose_widget()
+        self.unminimize()
+        self.present()
+        if widget is not None:
+            restore_after_widget(state, *self.opening_size)
 
     def on_first_map(self, *_):
         if not self.opening_applied:
@@ -410,6 +465,8 @@ class Window(Adw.ApplicationWindow):
                    + timer.duration - timer.remaining)
         self.progress.set_fraction(1 if timer.finished else elapsed / (config.total_minutes * 60))
         self.ring.queue_draw()
+        if self.summary_widget is not None:
+            self.summary_widget.update()
 
     def draw_ring(self, _area, cr, width, height):
         x, y = width / 2, height / 2
@@ -443,6 +500,12 @@ class Window(Adw.ApplicationWindow):
             # state could not replace the previous snapshot. Keep it available
             # for a retry, with the persistence error visible in the window.
             return False
+        self.closed = True
+        self.widget_cycle += 1
+        self.widget_capture_pending = False
+        if self.summary_widget is not None:
+            self.summary_widget.dispose_widget()
+            self.summary_widget = None
         self.timer.running = False
         self.update_inhibit()
         self.stop_sound_preview()
@@ -461,11 +524,11 @@ class Application(Adw.Application):
         super().__init__(application_id="io.github.simplepomodoro.App")
 
     def do_activate(self):
-        window = self.get_active_window()
+        window = next((item for item in self.get_windows() if isinstance(item, Window)), None)
         if window is None:
             Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(str(ROOT / "assets"))
             window = Window(self)
-        window.present()
+        window.restore_main()
 
 
 def main():

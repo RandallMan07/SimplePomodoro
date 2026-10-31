@@ -17,3 +17,8 @@ spinbutton { border-radius: 10px; background: @sp_input; }
 .error { color: @sp_warning; }
 progressbar trough { min-height: 4px; background: @sp_border; border-radius: 3px; }
 progressbar progress { min-height: 4px; background: @sp_focus; border-radius: 3px; }
+window.pomodoro-widget { background: transparent; }
+.summary-arrow { background: @sp_surface; color: @sp_focus; min-width: 28px; min-height: 20px; padding: 1px 8px; border: 1px solid @sp_border; border-radius: 0 0 12px 12px; }
+.summary-bar { background: @sp_surface; border: 1px solid @sp_border; border-radius: 16px; padding: 10px 14px; }
+.summary-state { color: @sp_focus; font-weight: 700; font-feature-settings: "tnum"; }
+.rest .summary-state { color: @sp_rest; }
